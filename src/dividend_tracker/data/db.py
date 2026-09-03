@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS stocks (
     name                    TEXT,
     currency                TEXT DEFAULT 'USD',
     exchange                TEXT,
+    country                 TEXT,          -- země původu (pro daňové sazby)
     sector                  TEXT,
     industry                TEXT,
     last_fundamental_update REAL,          -- epoch sekund; NULL = nikdy
@@ -139,6 +140,10 @@ class Database:
         # Schéma vytvoříme hned (idempotentní).
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            # Migrace starých DB — přidání sloupce, který neexistuje.
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()}
+            if "country" not in cols:
+                conn.execute("ALTER TABLE stocks ADD COLUMN country TEXT")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -164,6 +169,7 @@ class Database:
         name: Optional[str] = None,
         currency: Optional[str] = None,
         exchange: Optional[str] = None,
+        country: Optional[str] = None,
         sector: Optional[str] = None,
         industry: Optional[str] = None,
         fundamentals_json: Optional[str] = None,
@@ -177,10 +183,10 @@ class Database:
             if row is None:
                 conn.execute(
                     """INSERT INTO stocks
-                       (ticker, name, currency, exchange, sector, industry,
+                       (ticker, name, currency, exchange, country, sector, industry,
                         last_fundamental_update, fundamentals_json)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (ticker, name, currency or "USD", exchange, sector, industry, ts, fundamentals_json),
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (ticker, name, currency or "USD", exchange, country, sector, industry, ts, fundamentals_json),
                 )
             else:
                 # Neexistující hodnoty nenecháme přepsat NULL — zachováme staré.
@@ -189,12 +195,13 @@ class Database:
                        name = COALESCE(?, name),
                        currency = COALESCE(?, currency),
                        exchange = COALESCE(?, exchange),
+                       country = COALESCE(?, country),
                        sector = COALESCE(?, sector),
                        industry = COALESCE(?, industry),
                        last_fundamental_update = COALESCE(?, last_fundamental_update),
                        fundamentals_json = COALESCE(?, fundamentals_json)
                        WHERE ticker=?""",
-                    (name, currency, exchange, sector, industry, ts, fundamentals_json, ticker),
+                    (name, currency, exchange, country, sector, industry, ts, fundamentals_json, ticker),
                 )
 
     def mark_dividend_sync(self, ticker: str) -> None:
@@ -569,6 +576,12 @@ class Database:
         with self._conn() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return row["value"] if row else default
+
+    def list_settings(self) -> Dict[str, str]:
+        """Všechna nastavení jako slovník ``{key: value}``."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT key, value FROM settings").fetchall()
+            return {r["key"]: r["value"] for r in rows}
 
     def set_setting(self, key: str, value: str) -> None:
         with self._conn() as conn:

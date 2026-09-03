@@ -82,13 +82,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_pf = sub.add_parser("portfolio", help="správa držených pozic a cíle ročního příjmů")
     p_pf.add_argument(
-        "action", choices=["add", "remove", "list", "target"],
-        help="add/remove pozici, list výpis + příjem, target nastavení/zobrazení cíle",
+        "action", choices=["add", "remove", "list", "target", "tax"],
+        help="add/remove pozici, list výpis + příjem, target nastavení/zobrazení cíle, tax sazby daně (list/set/remove)",
     )
-    p_pf.add_argument("ticker", nargs="?", help="ticker (add/remove)")
+    p_pf.add_argument("ticker", nargs="?", help="ticker (add/remove); pro tax: list / set / remove")
     p_pf.add_argument("--shares", type=float, default=None, help="počet akcií (add; 0 smaže pozici)")
     p_pf.add_argument("--cost", type=float, default=None, help="průměrná nákupní cena (add)")
     p_pf.add_argument("--currency", default="USD", help="měna pozice (výchozí USD)")
+    p_pf.add_argument(
+        "--country", default=None,
+        help="země pro tax set/remove (ISO-2 kód nebo plný název, např. US)",
+    )
     p_pf.add_argument(
         "--amount", type=float, default=None,
         help="pro target: cílový roční příjem; bez hodnoty se jen zobrazí aktuální stav",
@@ -300,6 +304,59 @@ def main(argv: Optional[List[str]] = None) -> int:
                     )
                     if target.get("required_capital"):
                         print(f"Potřebný kapitál (yield {target['effective_yield_pct_used']}%): ~{target['required_capital']:,.0f}")
+            elif action == "tax":
+                from .domain.tax import WITHHOLDING_RATES, _normalize_country
+
+                sub_action = args.ticker  # list / set / remove
+                if sub_action is None:
+                    print("Použití: divtrack portfolio tax list | set --country US <sazba> | remove --country US", file=sys.stderr)
+                    return 2
+                overrides = {k: v for k, v in db.list_settings().items() if k.startswith("withholding_")}
+
+                if sub_action == "list":
+                    print("Sazby zadržovací daně (pro rezidenta ČR):")
+                    codes = sorted(set(WITHHOLDING_RATES) | {k.split("_", 1)[1] for k in overrides})
+                    for code in codes:
+                        built_in = WITHHOLDING_RATES.get(code)
+                        ov = overrides.get(f"withholding_{code}")
+                        src = "přepsáno v DB" if ov is not None else ("vestavěná" if built_in is not None else "—")
+                        val = ov if ov is not None else (f"{built_in:g}" if built_in is not None else "?")
+                        print(f"  {code:<4} {val:>6}%   ({src})")
+                    print("\nPozn.: sazby jsou odhad — pro přesné daňové poradenství se poraďte s daňovým poradcem.")
+
+                elif sub_action == "set":
+                    if not args.country:
+                        print("Zadejte zemi: --country US", file=sys.stderr)
+                        return 2
+                    code = _normalize_country(args.country)
+                    if not code:
+                        print(f"Nerozpoznaná země: {args.country}", file=sys.stderr)
+                        return 2
+                    rate = args.amount
+                    if rate is None or not (0.0 <= rate <= 100.0):
+                        print("Zadejte sazbu v rozmezí 0–100: divtrack portfolio tax set --country US 15", file=sys.stderr)
+                        return 2
+                    db.set_setting(f"withholding_{code}", str(rate))
+                    print(f"Sazba pro {code} nastavena na {rate:g}% (přepsání vestavěné sazby).")
+
+                elif sub_action == "remove":
+                    if not args.country:
+                        print("Zadejte zemi: --country US", file=sys.stderr)
+                        return 2
+                    code = _normalize_country(args.country)
+                    if not code:
+                        print(f"Nerozpoznaná země: {args.country}", file=sys.stderr)
+                        return 2
+                    db.delete_setting(f"withholding_{code}")
+                    built_in = WITHHOLDING_RATES.get(code)
+                    print(
+                        f"Přepsání sazby pro {code} odstraněno — vrací se vestavěná sazba "
+                        + (f"{built_in:g}%." if built_in is not None else "(žádná).")
+                    )
+
+                else:
+                    print(f"Neznámá akce tax: {sub_action} (použijte list / set / remove)", file=sys.stderr)
+                    return 2
         finally:
             db.close()
         return 0

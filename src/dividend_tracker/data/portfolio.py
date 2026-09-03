@@ -7,13 +7,17 @@ Vše se počítá **přímo z lokální DB** (bez externích volání):
 Hlavní metriky:
 - tržní hodnota a nákladová báze každé pozice + nerealizovaný P&L
 - **roční dividendový příjem** = Σ (shares × TTM DPS)
+- **čistý roční příjem po zdanění** — sražení zadržovací daně podle země
+  původu emitenta (sazby v ``domain/tax.py``, přepsatelné nastavením
+  ``withholding_<ZEME>`` v DB)
 - portfolio yield (příjem / tržní hodnota) a vážený yield on cost
 - **kalkulačka cíle**: při zadaném ročním příjmu spočítá potřebný kapitál
   (cíl ÷ očekávaný yield) a ukáže progres portfolia k cíli.
 
 Poznámka: příjem se počítá v měně jednotlivých pozic; pokud portfolio obsahuje
 více měn, součet je „smíšený“ — frontend to označí. Pro rentier plán v jedné
-měně (typicky USD) je výsledek přesný.
+měně (typicky USD) je výsledek přesný. Daňové sazby jsou odhad — pro přesné
+daňové poradenství se poraďte s daňovým poradcem.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from .db import Database
 from .watchlist import _build_series, _ttm
+from ..domain.tax import net_amount, withholding_rate
 
 log = logging.getLogger(__name__)
 
@@ -33,13 +38,20 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
     total_market_value = 0.0
     total_cost_basis = 0.0
     total_annual_income = 0.0
+    total_net_annual_income = 0.0
     income_by_currency: Dict[str, float] = {}
+
+    # Přepsání sazeb z databáze (sazby lze kdykoli upravit bez kódu).
+    overrides = {k: v for k, v in db.list_settings().items() if k.startswith("withholding_")}
 
     for pos in db.list_positions():
         tk = pos["ticker"]
         shares = float(pos.get("shares") or 0)
         avg_cost = pos.get("avg_cost")
         currency = pos.get("currency") or "USD"
+
+        stock = db.get_stock(tk) or {}
+        country = stock.get("country")
 
         quote = db.get_quote(tk) or {}
         price = quote.get("current_price")
@@ -50,6 +62,11 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
         market_value = shares * price if (price and price > 0) else None
         cost_basis = shares * avg_cost if (avg_cost and avg_cost > 0) else None
         annual_income = round(shares * dps_ttm, 2) if dps_ttm > 0 else 0.0
+
+        # Čistý příjem po zdanění — sazba podle země původu emitenta.
+        rate_pct = withholding_rate(country, overrides)
+        net_raw = net_amount(annual_income, country, overrides) if annual_income > 0 else None
+        net_annual_income = round(net_raw, 2) if net_raw is not None else 0.0
 
         yield_on_cost: Optional[float] = None
         if avg_cost and avg_cost > 0 and dps_ttm > 0:
@@ -68,6 +85,7 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
                 "shares": shares,
                 "avg_cost": avg_cost,
                 "currency": currency,
+                "country": country,
                 "price": price,
                 "market_value": round(market_value, 2) if market_value is not None else None,
                 "cost_basis": round(cost_basis, 2) if cost_basis is not None else None,
@@ -75,6 +93,8 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
                 "unrealized_pl_pct": unrealized_pl_pct,
                 "dps_ttm": dps_ttm or None,
                 "annual_income": annual_income,
+                "withholding_rate_pct": rate_pct,
+                "net_annual_income": net_annual_income,
                 "yield_on_cost_pct": yield_on_cost,
             }
         )
@@ -84,11 +104,16 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
         if cost_basis is not None:
             total_cost_basis += cost_basis
         total_annual_income += annual_income
+        total_net_annual_income += net_annual_income
         income_by_currency[currency] = round(income_by_currency.get(currency, 0.0) + annual_income, 2)
 
     portfolio_yield_pct: Optional[float] = None
     if total_market_value > 0 and total_annual_income > 0:
         portfolio_yield_pct = round(total_annual_income / total_market_value * 100.0, 2)
+
+    net_portfolio_yield_pct: Optional[float] = None
+    if total_market_value > 0 and total_net_annual_income > 0:
+        net_portfolio_yield_pct = round(total_net_annual_income / total_market_value * 100.0, 2)
 
     weighted_yield_on_cost_pct: Optional[float] = None
     if total_cost_basis > 0 and total_annual_income > 0:
@@ -105,8 +130,10 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
             else None
         ),
         "annual_income": round(total_annual_income, 2),
+        "net_annual_income": round(total_net_annual_income, 2),
         "income_by_currency": income_by_currency or None,
         "portfolio_yield_pct": portfolio_yield_pct,
+        "net_portfolio_yield_pct": net_portfolio_yield_pct,
         "weighted_yield_on_cost_pct": weighted_yield_on_cost_pct,
     }
 

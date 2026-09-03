@@ -304,6 +304,7 @@ button {
 .val-good { color: var(--green); }
 .val-warn { color: var(--yellow); }
 .val-bad { color: var(--red); }
+.val-net { color: var(--blue, #0a84ff); font-weight: 600; }
 
 /* ---------------- Fair value band ---------------- */
 

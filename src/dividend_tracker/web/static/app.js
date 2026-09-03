@@ -216,6 +216,11 @@ function wlCell(key, row) {
       const cls = v >= 5 ? "val-good" : v < 2.5 ? "val-warn" : "";
       return `<span class="${cls}">${fmtPct(v)}</span>`;
     }
+    case "net_yield_pct": {
+      if (v == null) return "—";
+      const cls = v >= 4 ? "val-good" : v < 2 ? "val-warn" : "";
+      return `<span class="${cls}">${fmtPct(v)}</span>`;
+    }
     case "growth_5y_pct": {
       if (v == null) return "—";
       const cls = v > 0 ? "val-good" : v < 0 ? "val-bad" : "";
@@ -260,9 +265,9 @@ function renderWatchlist() {
 
   watchlistBody.innerHTML = sorted.map((row) => {
     const cells = ["ticker", "name", "sector", "price", "change", "volume", "dps_ttm",
-      "yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend",
+      "yield_pct", "net_yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend",
       "low_52w", "high_52w", "drawdown_from_high_pct", "percentile_52w"]
-      .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|growth_5y_pct|streak_years|next_dividend|low_52w|high_52w|drawdown_from_high_pct|percentile_52w)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
+      .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|net_yield_pct|growth_5y_pct|streak_years|next_dividend|low_52w|high_52w|drawdown_from_high_pct|percentile_52w)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
       .join("");
     return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
   }).join("");
@@ -317,6 +322,12 @@ function pfCell(key, row) {
     }
     case "dps_ttm": return fmtMoney(v, row.currency);
     case "annual_income": return fmtMoney(v, row.currency);
+    case "net_annual_income": {
+      if (v == null) return "—";
+      const rate = row.withholding_rate_pct;
+      const title = rate ? `po sražení ${rate} % zadržovací daně` : "";
+      return `<span class="val-net" title="${title}">${fmtMoney(v, row.currency)}</span>`;
+    }
     case "yield_on_cost_pct": {
       if (v == null) return "—";
       const cls = v >= 5 ? "val-good" : "";
@@ -338,8 +349,8 @@ function renderPortfolio() {
 
   pfBody.innerHTML = sorted.map((row) => {
     const cells = ["ticker", "shares", "avg_cost", "price", "market_value",
-      "unrealized_pl_pct", "dps_ttm", "annual_income", "yield_on_cost_pct"]
-      .map((k) => `<td class="${/^(shares|avg_cost|price|market_value|unrealized_pl_pct|dps_ttm|annual_income|yield_on_cost_pct)$/.test(k) ? "num" : ""}">${pfCell(k, row)}</td>`)
+      "unrealized_pl_pct", "dps_ttm", "annual_income", "net_annual_income", "yield_on_cost_pct"]
+      .map((k) => `<td class="${/^(shares|avg_cost|price|market_value|unrealized_pl_pct|dps_ttm|annual_income|net_annual_income|yield_on_cost_pct)$/.test(k) ? "num" : ""}">${pfCell(k, row)}</td>`)
       .join("");
     return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
   }).join("");
@@ -355,7 +366,9 @@ function renderPortfolioSummary(p, t) {
   const stats = [
     ["Hodnota portfolia", p.total_market_value != null ? fmtMoney(p.total_market_value) : "—"],
     ["Roční příjem", p.annual_income > 0 ? `${fmtMoney(p.annual_income)} / rok` : "—"],
+    ["Čistý příjem (po zdanění)", p.net_annual_income > 0 ? `${fmtMoney(p.net_annual_income)} / rok` : "—"],
     ["Portfolio yield", p.portfolio_yield_pct != null ? fmtPct(p.portfolio_yield_pct) : "—"],
+    ["Net portfolio yield", p.net_portfolio_yield_pct != null ? fmtPct(p.net_portfolio_yield_pct) : "—"],
     ["Yield on cost", p.weighted_yield_on_cost_pct != null ? fmtPct(p.weighted_yield_on_cost_pct) : "—"],
   ];
   pfSummary.innerHTML = stats.map(([label, value]) =>

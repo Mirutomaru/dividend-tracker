@@ -86,8 +86,15 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
     Každý řádek obsahuje sledované atributy — frontend je může seřadit podle
     libovolného z nich vzestupně/sestupně. Chybějící hodnoty jsou ``None``
     (frontend je vykreslí jako „—“ a při řazení zařadí na konec).
+
+    ``net_yield_pct`` = hrubý yield po sražení zadržovací daně podle země
+    původu emitenta (sazby lze přepsat nastavením ``withholding_<ZEME>``).
     """
     from ..domain.dividends import aggregate_dividends, cagr, dividend_streak, full_years
+    from ..domain.tax import net_yield_pct
+
+    # Přepsání sazeb z databáze (sazby lze kdykoli upravit bez kódu).
+    overrides = {k: v for k, v in db.list_settings().items() if k.startswith("withholding_")}
 
     rows: List[Dict[str, Any]] = []
     for stock in db.list_stocks():  # ORDER BY ticker → abecedně
@@ -119,6 +126,7 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
                 "name": stock.get("name"),
                 "currency": stock.get("currency") or "USD",
                 "exchange": stock.get("exchange"),
+                "country": stock.get("country"),
                 "sector": stock.get("sector"),
                 "price": price,
                 "change": quote.get("change"),
@@ -126,6 +134,8 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
                 "quote_age_s": (time.time() - quote["timestamp"]) if quote.get("timestamp") else None,
                 "dps_ttm": ttm or dps_ttm_db or 0.0,
                 "yield_pct": yield_pct,
+                # čistý yield po zdanění (zdržovací daň podle země původu)
+                "net_yield_pct": net_yield_pct(yield_pct, stock.get("country"), overrides),
                 "payout_pct": _payout_pct(stock, ttm),
                 "growth_5y_pct": growth_5y,
                 "streak_years": streak,

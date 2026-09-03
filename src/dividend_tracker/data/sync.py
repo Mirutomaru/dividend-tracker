@@ -118,6 +118,7 @@ def sync_via_fmp(fmp: FMPCacheClient, db: Database, ticker: str) -> None:
             name=prof.get("name"),
             currency=prof.get("currency") or "USD",
             exchange=prof.get("exchangeShortName") or prof.get("exchange"),
+            country=prof.get("country"),
             sector=prof.get("industry"),
             industry=None,  # FMP v profilu nemá samostatný pododvětvový údaj
         )
@@ -166,6 +167,7 @@ def sync_via_yfinance(db: Database, ticker: str) -> None:
         name=info.get("longName") or info.get("shortName"),
         currency=info.get("currency") or "USD",
         exchange=info.get("fullExchangeName") or info.get("exchange"),
+        country=info.get("country"),
         sector=info.get("sector"),
         industry=info.get("industry"),
     )
