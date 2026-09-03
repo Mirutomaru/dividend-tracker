@@ -10,6 +10,7 @@
 from .db import Database
 from .fetcher import DataFetchError, build_snapshot, get_sector_benchmark
 from .fmp import DAILY_LIMIT, FMPCacheClient, FMPError, FMPLimitExceeded, get_api_key
+from .portfolio import build_income_target_report, build_portfolio_report
 from .quotes import fetch_quotes, sync_quotes
 from .sync import (
     DIVIDEND_TTL,

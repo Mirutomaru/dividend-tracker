@@ -63,6 +63,50 @@
       </div>
     </section>
 
+    <!-- Portfolio — držené pozice a cíl ročního příjmů -->
+    <section id="portfolio-section" class="hidden">
+      <div class="card table-card">
+        <div class="table-head-bar">
+          <h2>Portfolio</h2>
+          <span id="portfolio-count" class="table-count"></span>
+        </div>
+        <p class="table-hint">Držené pozice z lokální databáze · příjem = počet akcií × TTM DPS (z dividendové historie)</p>
+
+        <!-- Souhrn -->
+        <div id="portfolio-summary" class="pf-summary"></div>
+
+        <!-- Cíl ročního příjmů -->
+        <div id="income-target-box" class="pf-target hidden">
+          <div class="pf-target-head">
+            <span>Cíl ročního příjmů</span>
+            <span id="target-progress-label"></span>
+          </div>
+          <div class="progress-track"><div id="target-progress-bar" class="progress-fill"></div></div>
+          <p id="target-detail" class="pf-target-detail"></p>
+        </div>
+
+        <!-- Pozice -->
+        <div class="table-scroll">
+          <table id="portfolio-table">
+            <thead>
+              <tr>
+                <th data-key="ticker" class="sortable">Ticker</th>
+                <th data-key="shares" class="sortable num">Akcie</th>
+                <th data-key="avg_cost" class="sortable num">Nákupní cena</th>
+                <th data-key="price" class="sortable num">Cena</th>
+                <th data-key="market_value" class="sortable num">Hodnota</th>
+                <th data-key="unrealized_pl_pct" class="sortable num">P&amp;L %</th>
+                <th data-key="dps_ttm" class="sortable num">DPS TTM</th>
+                <th data-key="annual_income" class="sortable num">Příjem/rok</th>
+                <th data-key="yield_on_cost_pct" class="sortable num">Yield on cost %</th>
+              </tr>
+            </thead>
+            <tbody id="portfolio-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- Progress (analýza i sync) -->
     <section id="progress" class="hidden">
       <div class="card progress-card">

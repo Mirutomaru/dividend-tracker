@@ -246,6 +246,53 @@ def test_fmp_status_endpoint(server):
     assert "configured" in body and "calls_used" in body and "daily_limit" in body
 
 
+# ------------------------------------------------------------------ portfolio (DB)
+
+@pytest.fixture()
+def portfolio_server(tmp_path):
+    """Server s pozicemi v portfoliu a nastaveným cílem příjmů."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "pf_web.db")
+    db.upsert_stock("KO", name="Coca-Cola", currency="USD")
+    db.upsert_quote("KO", current_price=60.0)
+    db.upsert_position("KO", shares=100, avg_cost=50.0)
+    db.set_setting("income_target", "1000")
+    httpd = create_app(port=0, db_path=db.path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    yield f"http://{host}:{port}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_portfolio_endpoint(portfolio_server):
+    status, body = _request(portfolio_server, "GET", "/api/portfolio")
+    assert status == 200
+    pf = body["portfolio"]
+    assert pf["n_positions"] == 1
+    pos = pf["positions"][0]
+    assert pos["ticker"] == "KO"
+    assert pos["market_value"] == pytest.approx(6000.0)
+    # bez dividendové historie je příjem 0, ale struktura je kompletní
+    for key in ("shares", "avg_cost", "price", "cost_basis", "dps_ttm",
+                "annual_income", "yield_on_cost_pct"):
+        assert key in pos
+
+    target = body["income_target"]
+    assert target["configured"] is True
+    assert target["target_annual_income"] == pytest.approx(1000.0)
+
+
+def test_portfolio_endpoint_empty(server):
+    """Prázdné portfolio → n_positions 0, cíl nenastaven."""
+    status, body = _request(server, "GET", "/api/portfolio")
+    assert status == 200
+    assert body["portfolio"]["n_positions"] == 0
+    assert body["income_target"] == {"configured": False}
+
+
 # ------------------------------------------------------------------ sync
 
 def test_sync_flow_with_mocked_providers(monkeypatch, server):

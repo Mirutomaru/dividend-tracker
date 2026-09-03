@@ -25,6 +25,14 @@ const syncBtn = $("#sync-btn");
 const fmpBar = $("#fmp-bar");
 const fmpStatusText = $("#fmp-status-text");
 const refreshFmpBtn = $("#refresh-fmp-btn");
+const pfSection = $("#portfolio-section");
+const pfBody = $("#portfolio-body");
+const pfCount = $("#portfolio-count");
+const pfSummary = $("#portfolio-summary");
+const targetBox = $("#income-target-box");
+const targetLabel = $("#target-progress-label");
+const targetBar = $("#target-progress-bar");
+const targetDetail = $("#target-detail");
 
 let pollTimer = null;
 let sortKey = "score";      // výchozí řazení: nejlepší skóre nahoře
@@ -256,6 +264,107 @@ async function loadWatchlist() {
     } else {
       watchlistSection.classList.add("hidden");
       emptyState.classList.remove("hidden");
+    }
+  } catch {
+    /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+/* ------------------------------ Portfolio ------------------------------ */
+
+let pfRows = [];
+let pfSortKey = "market_value";
+let pfSortDir = -1;
+
+function pfCell(key, row) {
+  const v = row[key];
+  switch (key) {
+    case "ticker": return `<strong>${escapeHtml(v)}</strong>`;
+    case "shares": return fmtInt(v);
+    case "avg_cost": return fmtMoney(v, row.currency);
+    case "price": return fmtMoney(v, row.currency);
+    case "market_value": return fmtMoney(v, row.currency);
+    case "unrealized_pl_pct": {
+      if (v == null) return "—";
+      const cls = v > 0 ? "val-good" : v < 0 ? "val-bad" : "";
+      const sign = v > 0 ? "+" : "";
+      return `<span class="${cls}">${sign}${fmtPct(v)}</span>`;
+    }
+    case "dps_ttm": return fmtMoney(v, row.currency);
+    case "annual_income": return fmtMoney(v, row.currency);
+    case "yield_on_cost_pct": {
+      if (v == null) return "—";
+      const cls = v >= 5 ? "val-good" : "";
+      return `<span class="${cls}">${fmtPct(v)}</span>`;
+    }
+    default: return v == null ? "—" : escapeHtml(String(v));
+  }
+}
+
+function renderPortfolio() {
+  const sorted = [...pfRows].sort((a, b) => {
+    let va = a[pfSortKey], vb = b[pfSortKey];
+    if (va == null && vb == null) return a.ticker.localeCompare(b.ticker);
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === "string") return pfSortDir * va.localeCompare(vb, "cs");
+    return pfSortDir * (va - vb);
+  });
+
+  pfBody.innerHTML = sorted.map((row) => {
+    const cells = ["ticker", "shares", "avg_cost", "price", "market_value",
+      "unrealized_pl_pct", "dps_ttm", "annual_income", "yield_on_cost_pct"]
+      .map((k) => `<td class="${/^(shares|avg_cost|price|market_value|unrealized_pl_pct|dps_ttm|annual_income|yield_on_cost_pct)$/.test(k) ? "num" : ""}">${pfCell(k, row)}</td>`)
+      .join("");
+    return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
+  }).join("");
+
+  pfCount.textContent = `${pfRows.length} pozic`;
+  document.querySelectorAll("#portfolio-table thead th").forEach((th) => {
+    th.classList.remove("sorted-asc", "sorted-desc");
+    if (th.dataset.key === pfSortKey) th.classList.add(pfSortDir === -1 ? "sorted-desc" : "sorted-asc");
+  });
+}
+
+function renderPortfolioSummary(p, t) {
+  const stats = [
+    ["Hodnota portfolia", p.total_market_value != null ? fmtMoney(p.total_market_value) : "—"],
+    ["Roční příjem", p.annual_income > 0 ? `${fmtMoney(p.annual_income)} / rok` : "—"],
+    ["Portfolio yield", p.portfolio_yield_pct != null ? fmtPct(p.portfolio_yield_pct) : "—"],
+    ["Yield on cost", p.weighted_yield_on_cost_pct != null ? fmtPct(p.weighted_yield_on_cost_pct) : "—"],
+  ];
+  pfSummary.innerHTML = stats.map(([label, value]) =>
+    `<div class="pf-stat"><div class="pf-label">${label}</div><div class="pf-value">${value}</div></div>`).join("");
+
+  if (t && t.configured) {
+    targetBox.classList.remove("hidden");
+    const pct = Math.min(100, Math.max(0, t.progress_pct ?? 0));
+    targetBar.style.width = `${pct}%`;
+    targetLabel.textContent = `${fmtMoney(t.current_annual_income)} / ${fmtMoney(t.target_annual_income)} (${pct} %)`;
+    const parts = [];
+    if (t.remaining_income > 0) parts.push(`chybí ${fmtMoney(t.remaining_income)}/rok`);
+    else parts.push("cíl dosažen 🎉");
+    if (t.required_capital != null) {
+      parts.push(`potřebný kapitál ~${fmtMoney(t.required_capital)} (yield ${fmtPct(t.effective_yield_pct_used)})`);
+    }
+    targetDetail.textContent = parts.join(" · ");
+  } else {
+    targetBox.classList.add("hidden");
+  }
+}
+
+async function loadPortfolio() {
+  try {
+    const res = await fetch("/api/portfolio");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    pfRows = (data.portfolio && data.portfolio.positions) || [];
+    if (pfRows.length) {
+      pfSection.classList.remove("hidden");
+      renderPortfolioSummary(data.portfolio, data.income_target);
+      renderPortfolio();
+    } else {
+      pfSection.classList.add("hidden");
     }
   } catch {
     /* server nedostupný — zkusit znovu při dalším načtení */
@@ -608,6 +717,16 @@ document.querySelectorAll("#watchlist-table thead th.sortable").forEach((th) => 
   });
 });
 
+// Seřazení portfolia kliknutím na záhlaví.
+document.querySelectorAll("#portfolio-table thead th.sortable").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (pfSortKey === key) pfSortDir *= -1;
+    else { pfSortKey = key; pfSortDir = typeof pfRows[0]?.[key] === "string" ? 1 : -1; }
+    renderPortfolio();
+  });
+});
+
 // Seřazení srovnávací tabulky analýzy.
 document.querySelectorAll("#compare-table thead th.sortable").forEach((th) => {
   th.addEventListener("click", () => {
@@ -631,7 +750,8 @@ tableBody.addEventListener("click", (e) => {
 
 refreshFmpBtn.addEventListener("click", loadFmpStatus);
 
-// Start: načíst watchlist z DB + stav FMP limitu.
+// Start: načíst watchlist z DB + portfolio + stav FMP limitu.
 loadWatchlist();
+loadPortfolio();
 loadFmpStatus();
 input.focus();

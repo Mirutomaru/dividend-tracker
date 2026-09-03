@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -75,6 +75,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="cesta k záložnímu souboru (výchozí ~/.cache/dividend-tracker/watchlist.json)",
     )
     p_watch.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
+
+    p_pf = sub.add_parser("portfolio", help="správa držených pozic a cíle ročního příjmů")
+    p_pf.add_argument(
+        "action", choices=["add", "remove", "list", "target"],
+        help="add/remove pozici, list výpis + příjem, target nastavení/zobrazení cíle",
+    )
+    p_pf.add_argument("ticker", nargs="?", help="ticker (add/remove)")
+    p_pf.add_argument("--shares", type=float, default=None, help="počet akcií (add; 0 smaže pozici)")
+    p_pf.add_argument("--cost", type=float, default=None, help="průměrná nákupní cena (add)")
+    p_pf.add_argument("--currency", default="USD", help="měna pozice (výchozí USD)")
+    p_pf.add_argument(
+        "--amount", type=float, default=None,
+        help="pro target: cílový roční příjem; bez hodnoty se jen zobrazí aktuální stav",
+    )
+    p_pf.add_argument("--yield-pct", type=float, default=None, help="očekávaný yield %% pro výpočet kapitálu")
+    p_pf.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
 
     p_cfg = sub.add_parser("config", help="zobrazit/nastavit konfiguraci (.env)")
     p_cfg.add_argument(
@@ -183,6 +199,79 @@ def main(argv: Optional[List[str]] = None) -> int:
             elif args.action == "export":
                 path = export_watchlist_file(db, file_path)
                 print(f"Záloha uložena do: {path}")
+        finally:
+            db.close()
+        return 0
+
+    if args.cmd == "portfolio":
+        from .data.db import DEFAULT_DB_PATH, Database
+        from .data.portfolio import build_income_target_report, build_portfolio_report
+
+        db = Database(args.db or DEFAULT_DB_PATH)
+        try:
+            action = args.action
+            if action in ("add", "remove"):
+                if not args.ticker:
+                    print(f"Zadejte ticker, např. divtrack portfolio {action} KO --shares 10 --cost 65", file=sys.stderr)
+                    return 2
+                tk = args.ticker.strip().upper()
+                if action == "add":
+                    if args.shares is None:
+                        print("Zadejte počet akcií: --shares N", file=sys.stderr)
+                        return 2
+                    db.upsert_position(tk, shares=args.shares, avg_cost=args.cost, currency=args.currency)
+                    # Pozice automaticky patří do trvalé watchlisty.
+                    from .data.watchlist_store import auto_add_to_watchlist
+
+                    auto_add_to_watchlist(db, [tk])
+                    print(f"Pozice {tk}: {args.shares} ks" + (f" @ {args.cost}" if args.cost else ""))
+                else:
+                    db.remove_position(tk)
+                    print(f"Pozice {tk} odstraněna.")
+            elif action == "list":
+                report = build_portfolio_report(db)
+                if not report["positions"]:
+                    print("Portfolio je prázdné — přidejte pozici: divtrack portfolio add KO --shares 10 --cost 65")
+                else:
+                    for p in report["positions"]:
+                        price_s = f"{p['price']:.2f}" if p["price"] is not None else "—"
+                        mv_s = f"{p['market_value']:,.2f}" if p["market_value"] is not None else "—"
+                        inc_s = f"{p['annual_income']:,.2f} {p['currency']}/rok" if p["dps_ttm"] else "bez DPS v DB"
+                        print(f"{p['ticker']:<6} {p['shares']:>8.2f} ks  cena {price_s:>9}  hodnota {mv_s:>12}  příjem {inc_s}")
+                    mv = report["total_market_value"]
+                    inc = report["annual_income"]
+                    yld = report["portfolio_yield_pct"]
+                    print("-" * 78)
+                    print(f"Hodnota: {mv:,.2f}" if mv else "Hodnota: — (chybí ceny)")
+                    print(
+                        f"Roční příjem: {inc:,.2f}  |  portfolio yield: {yld}%  |  pozic: {report['n_positions']}"
+                        if yld is not None
+                        else f"Roční příjem: {inc:,.2f}  |  pozic: {report['n_positions']}"
+                    )
+                target = build_income_target_report(db)
+                if target.get("configured"):
+                    print(
+                        f"Cíl: {target['current_annual_income']:,.0f}/{target['target_annual_income']:,.0f} "
+                        f"({target['progress_pct']}%) — chybí {target['remaining_income']:,.0f}/rok, "
+                        f"potřebný kapitál ~{target['required_capital']:,.0f}"
+                    )
+            elif action == "target":
+                if args.amount is not None:
+                    db.set_setting("income_target", str(args.amount))
+                    print(f"Cíl ročního příjmů nastaven na {args.amount:,.0f}")
+                if args.yield_pct is not None:
+                    db.set_setting("target_yield_pct", str(args.yield_pct))
+                    print(f"Očekávaný yield pro výpočet kapitálu: {args.yield_pct}%")
+                target = build_income_target_report(db)
+                if not target.get("configured"):
+                    print("Cíl není nastaven — použijte: divtrack portfolio target --amount 60000")
+                else:
+                    print(
+                        f"Cíl: {target['current_annual_income']:,.0f}/{target['target_annual_income']:,.0f} "
+                        f"({target['progress_pct']}%)"
+                    )
+                    if target.get("required_capital"):
+                        print(f"Potřebný kapitál (yield {target['effective_yield_pct_used']}%): ~{target['required_capital']:,.0f}")
         finally:
             db.close()
         return 0

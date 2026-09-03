@@ -193,6 +193,9 @@ class WebApp(BaseHTTPRequestHandler):
             if path == "/api/watchlist":
                 self._handle_watchlist()
                 return
+            if path == "/api/portfolio":
+                self._handle_portfolio()
+                return
             if path == "/api/fmp-status":
                 from ..data.fmp import FMPCacheClient
 
@@ -218,6 +221,14 @@ class WebApp(BaseHTTPRequestHandler):
         """Srovnávací řádky přímo z lokální DB — žádné externí volání."""
         rows = build_watchlist_rows(self.db)
         self._send_json({"rows": rows, "count": len(rows)})
+
+    def _handle_portfolio(self) -> None:
+        """Portfolio + cíl ročního příjmů přímo z lokální DB."""
+        from ..data.portfolio import build_income_target_report, build_portfolio_report
+
+        report = build_portfolio_report(self.db)
+        target = build_income_target_report(self.db)
+        self._send_json({"portfolio": report, "income_target": target})
 
     def _handle_job_get(self, path: str) -> None:
         job_id = path.rsplit("/", 1)[-1]
