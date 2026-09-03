@@ -98,9 +98,15 @@ divtrack web --port 9000     # vlastní port
 
 Moderní, čisté webové rozhraní (Apple-style design) bez jakýchkoli externích
 závislostí — běží na standardní knihovně Pythonu. Zadejte tickery oddělené mezerou
-(nebo čárkou), klikněte „Analyzovat“ a výsledky se postupně vykreslují jako karty:
-skóre dividendového zdraví (0–100) s bezpečnostním flagem, dividendové metriky,
-ocenění vs. odvětvový benchmark, finanční zdraví a férová cena s nákupní zónou.
+(nebo čárkou), klikněte „Analyzovat“ a výsledky se postupně vykreslují:
+
+- **Srovnávací tabulka** (až 100 tickerů) — jeden řádek pod druhým, seřaditelné
+  sloupce (klik na záhlaví): cena, yield, payout, růst, série, skóre, férová cena,
+  nákupní zóna a „do zóny“ (o kolik % musí cena klesnout). Řádky s cenou právě v
+  nákupní zóně jsou zvýrazněny zeleně. Klik na řádek přeskočí na detail.
+- **Detailní karty** — skóre dividendového zdraví (0–100) s bezpečnostním flagem,
+  dividendové metriky, ocenění vs. odvětvový benchmark, finanční zdraví a férová
+  cena s nákupní zónou.
 
 - Analýza běží asynchronně v pozadí (thread pool), UI se nezavěšuje.
 - Podpora automatického tmavého režimu (`prefers-color-scheme`).

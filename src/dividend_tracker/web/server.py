@@ -42,7 +42,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 #: Přísný formát tickera — alfanumerika + tečka a pomlčka (BRK.B, BRK-B).
 TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")
-MAX_TICKERS_PER_JOB = 10
+MAX_TICKERS_PER_JOB = 100
 
 _CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -77,7 +77,7 @@ class Job:
 class JobManager:
     """Spravuje asynchronní analýzy tickerů v thread poolu."""
 
-    def __init__(self, max_workers: int = 3) -> None:
+    def __init__(self, max_workers: int = 6) -> None:
         self._jobs: Dict[str, Job] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="divtrack")

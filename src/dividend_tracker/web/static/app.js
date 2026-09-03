@@ -1,5 +1,6 @@
 /* ============================================================
    Dividend Tracker — frontend logika (vanilla JS, žádné závislosti)
+   Srovnávací tabulka + detailní karty.
    ============================================================ */
 
 "use strict";
@@ -14,8 +15,14 @@ const progressEl = $("#progress");
 const resultsEl = $("#results");
 const progressTitle = $("#progress-title");
 const progressSub = $("#progress-sub");
+const tableSection = $("#table-section");
+const tableBody = $("#table-body");
+const tableCount = $("#table-count");
 
 let pollTimer = null;
+let sortKey = "score";      // výchozí řazení: nejlepší skóre nahoře
+let sortDir = -1;           // -1 = sestupně, 1 = vzestupně
+let currentRows = [];       // poslední vyrenderované řádky (pro přeseřazení bez fetche)
 
 /* ------------------------------ formátování ------------------------------ */
 
@@ -56,7 +63,108 @@ function scoreClass(score) {
 
 const FLAG_LABELS = { green: "🟢 Bezpečná", yellow: "🟡 Pozor", red: "🔴 Riziková" };
 
-/* ------------------------------ renderování ------------------------------ */
+/* ------------------------------ tabulka ------------------------------ */
+
+/** Vytáhne řádek s hodnotami pro seřazení z reportu (nebo chyby). */
+function rowFromEntry(entry) {
+  if (entry.error) {
+    return { ticker: entry.ticker, name: "", error: true, price: null, yieldPct: null, payout: null, growth5: null, streak: null, score: null, fv: null, zoneLow: null, zoneHigh: null, distPct: null };
+  }
+  const r = entry.report;
+  const d = (r.metrics || {}).dividend || {};
+  const score = r.score || {}, fv = r.fair_value || {};
+  const isReit = /real estate/i.test((r.company || {}).sector || "");
+  const payout = isReit ? (d.affo_payout_ratio_pct ?? d.ffo_payout_ratio_pct) : d.payout_ratio_eps_pct;
+
+  let distPct = null; // kolik % musí cena klesnout, aby vstoupila do nákupní zóny
+  if (r.price_current != null && fv.buy_zone_high != null) {
+    distPct = ((r.price_current - fv.buy_zone_high) / r.price_current) * 100; // <= 0 → už v zóně
+  }
+
+  return {
+    ticker: r.ticker,
+    name: (r.company || {}).name || "",
+    error: false,
+    price: r.price_current,
+    yieldPct: d.yield_trailing_pct,
+    payout,
+    growth5: d.growth_cagr_5y_pct,
+    streak: d.dividend_streak_years ?? null,
+    score: score.applicable === false ? null : (score.total_0_100 ?? null),
+    fv: fv.fair_value ?? null,
+    zoneLow: fv.buy_zone_low ?? null,
+    zoneHigh: fv.buy_zone_high ?? null,
+    distPct,
+  };
+}
+
+function sortValue(row) {
+  switch (sortKey) {
+    case "ticker": return row.ticker;
+    case "price": return row.price;
+    case "yield": return row.yieldPct;
+    case "payout": return row.payout;
+    case "growth5": return row.growth5;
+    case "streak": return row.streak;
+    case "score": return row.score;
+    case "fv": return row.fv;
+    case "zone": return row.zoneHigh;
+    case "dist": return row.distPct == null ? Infinity : row.distPct; // nejblíž zóně nahoře
+    default: return 0;
+  }
+}
+
+function renderTable(rows) {
+  currentRows = rows;
+  const sorted = [...rows].sort((a, b) => {
+    const va = sortValue(a), vb = sortValue(b);
+    if (va == null && vb == null) return a.ticker.localeCompare(b.ticker);
+    if (va == null) return 1;   // chybějící hodnoty vždy dolů
+    if (vb == null) return -1;
+    if (typeof va === "string") return sortDir * va.localeCompare(vb);
+    return sortDir * (va - vb);
+  });
+
+  tableBody.innerHTML = sorted.map((row) => {
+    const inZone = row.distPct != null && row.distPct <= 0;
+    let distCell, distCls;
+    if (row.error) { distCell = "—"; distCls = ""; }
+    else if (inZone) { distCell = `<span class="badge badge-green">v zóně</span>`; distCls = ""; }
+    else if (row.distPct == null) { distCell = "—"; distCls = ""; }
+    else {
+      const cls = row.distPct <= 15 ? "dist-watch" : "dist-far";
+      distCell = `<span class="${cls}">−${row.distPct.toFixed(1)} %</span>`;
+    }
+
+    const scoreCell = row.score == null
+      ? (row.error ? "⚠️" : "—")
+      : `<span class="badge badge-${scoreClass(row.score) === "val-good" ? "green" : scoreClass(row.score) === "val-warn" ? "yellow" : "red"}">${Math.round(row.score)}</span>`;
+
+    return `<tr data-ticker="${escapeHtml(row.ticker)}" class="${inZone ? "in-zone" : ""}">
+      <td><span class="td-ticker">${escapeHtml(row.ticker)}</span>${row.name ? `<span class="td-sub">${escapeHtml(row.name)}</span>` : ""}</td>
+      <td class="num">${fmtMoney(row.price)}</td>
+      <td class="num">${fmtPct(row.yieldPct)}</td>
+      <td class="num">${fmtPct(row.payout)}</td>
+      <td class="num">${fmtPct(row.growth5)}</td>
+      <td class="num">${row.streak == null ? "—" : row.streak}</td>
+      <td class="num">${scoreCell}</td>
+      <td class="num">${fmtMoney(row.fv)}</td>
+      <td class="num">${row.zoneLow != null && row.zoneHigh != null ? `${fmtMoney(row.zoneLow)} – ${fmtMoney(row.zoneHigh)}` : "—"}</td>
+      <td class="num">${distCell}</td>
+    </tr>`;
+  }).join("");
+
+  const nInZone = rows.filter((r) => !r.error && r.distPct != null && r.distPct <= 0).length;
+  tableCount.textContent = `${rows.length} ticker(ů)` + (nInZone ? ` · ${nInZone} v nákupní zóně` : "");
+
+  // indikátor aktuálního řazení
+  document.querySelectorAll("#compare-table thead th").forEach((th) => {
+    th.classList.remove("sorted-asc", "sorted-desc");
+    if (th.dataset.key === sortKey) th.classList.add(sortDir === -1 ? "sorted-desc" : "sorted-asc");
+  });
+}
+
+/* ------------------------------ renderování karet ------------------------------ */
 
 function tile(label, value, sub = "", cls = "") {
   return `<div class="metric-tile">
@@ -92,7 +200,6 @@ function renderTickerCard(entry) {
   const m = r.metrics || {};
   const d = m.dividend || {}, v = m.valuation || {}, h = m.health || {};
   const score = r.score || {}, fv = r.fair_value || {};
-  const bd = score.breakdown || {};
 
   /* --- skóre sekce --- */
   let scoreHtml;
@@ -186,7 +293,7 @@ function renderTickerCard(entry) {
 
   const gaps = (r.data_gaps || []).length ? `<p style="font-size:12px;color:var(--text-secondary);padding:0 28px 16px">Chybějící data: ${escapeHtml(r.data_gaps.join(", "))}</p>` : "";
 
-  return `<article class="card ticker-card">
+  return `<article class="card ticker-card" id="detail-${escapeHtml(r.ticker)}">
     <div class="ticker-head">
       <div class="ticker-id">
         <span class="ticker-symbol">${escapeHtml(r.ticker)}</span>
@@ -218,6 +325,7 @@ function escapeHtml(s) {
 async function startAnalysis(tickers) {
   setBusy(true);
   resultsEl.innerHTML = "";
+  tableBody.innerHTML = "";
   emptyState.classList.add("hidden");
   progressEl.classList.remove("hidden");
   progressTitle.textContent = `Analyzuji ${tickers.length} ticker(ů)…`;
@@ -245,13 +353,19 @@ function pollJob(jobId, total) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const job = await res.json();
 
-      // Render hotové položky postupně.
+      // Detailní karty — postupně, jen nové položky.
       for (const entry of job.results) {
         const el = document.getElementById(`card-${entry.ticker}`);
         if (!el) {
           resultsEl.insertAdjacentHTML("beforeend", `<div id="card-${entry.ticker}">${renderTickerCard(entry)}</div>`);
           animateRing(document.querySelector(`#card-${entry.ticker} .ring-fg`));
         }
+      }
+
+      // Srovnávací tabulka — kompletně přerenderovat (drží seřazení).
+      if (job.results.length) {
+        tableSection.classList.remove("hidden");
+        renderTable(job.results.map(rowFromEntry));
       }
 
       progressTitle.textContent = `Analyzuji… (${job.done}/${total})`;
@@ -275,6 +389,7 @@ function animateRing(circle) {
 
 function showError(msg) {
   progressEl.classList.add("hidden");
+  tableSection.classList.add("hidden");
   resultsEl.innerHTML = `<article class="card error-card">
     <span class="error-icon">⚠️</span>
     <div><h3>Chyba</h3><p>${escapeHtml(msg)}</p></div>
@@ -291,9 +406,30 @@ function setBusy(busy) {
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
-  const tickers = input.value.split(/[\s,]+/).map((t) => t.trim().toUpperCase()).filter(Boolean);
+  const tickers = [...new Set(input.value.split(/[\s,]+/).map((t) => t.trim().toUpperCase()).filter(Boolean))];
   if (!tickers.length) return;
-  startAnalysis(tickers.slice(0, 10));
+  startAnalysis(tickers.slice(0, 100));
+});
+
+// Seřazení kliknutím na záhlaví sloupce.
+document.querySelectorAll("#compare-table thead th.sortable").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortDir *= -1;
+    else { sortKey = key; sortDir = key === "ticker" ? 1 : -1; }
+    renderTable(currentRows);
+  });
+});
+
+// Klik na řádek → skok na detailní kartu.
+tableBody.addEventListener("click", (e) => {
+  const tr = e.target.closest("tr[data-ticker]");
+  if (!tr) return;
+  const card = document.getElementById(`card-${tr.dataset.ticker}`);
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  card.style.outline = "2px solid var(--accent)";
+  setTimeout(() => { card.style.outline = ""; }, 1600);
 });
 
 input.focus();

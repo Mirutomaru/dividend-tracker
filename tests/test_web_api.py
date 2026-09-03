@@ -158,7 +158,7 @@ def test_unknown_job_404(server):
 
 
 def test_dedup_and_limit(monkeypatch, server):
-    """Duplicitní tickery se deduplikují; limit 10 tickerů na job."""
+    """Duplicitní tickery se deduplikují; limit 100 tickerů na job."""
     from dividend_tracker import web as web_pkg
 
     monkeypatch.setattr(web_pkg.server, "analyze_ticker", lambda t, **kw: {"ticker": t})
@@ -168,11 +168,11 @@ def test_dedup_and_limit(monkeypatch, server):
     job = _wait_job(server, body["job_id"])
     assert job["total"] == 1
 
-    many = [f"T{i:02d}" for i in range(15)]
+    many = [f"T{i:03d}" for i in range(105)]
     status, body = _request(server, "POST", "/api/analyze", {"tickers": many})
     assert status == 202
-    job = _wait_job(server, body["job_id"])
-    assert job["total"] == 10
+    job = _wait_job(server, body["job_id"], timeout=15.0)
+    assert job["total"] == 100
 
 
 def test_custom_params_forwarded(monkeypatch, server):

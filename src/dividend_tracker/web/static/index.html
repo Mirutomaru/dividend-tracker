@@ -40,6 +40,35 @@
       </div>
     </section>
 
+    <section id="table-section" class="hidden">
+      <div class="card table-card">
+        <div class="table-head-bar">
+          <h2>Srovnání</h2>
+          <span id="table-count" class="table-count"></span>
+        </div>
+        <p class="table-hint">Klikněte na záhlaví sloupce pro seřazení · zelený řádek = cena právě v nákupní zóně</p>
+        <div class="table-scroll">
+          <table id="compare-table">
+            <thead>
+              <tr>
+                <th data-key="ticker" class="sortable">Ticker</th>
+                <th data-key="price" class="sortable num">Cena</th>
+                <th data-key="yield" class="sortable num">Yield %</th>
+                <th data-key="payout" class="sortable num">Payout %</th>
+                <th data-key="growth5" class="sortable num">Růst 5l %</th>
+                <th data-key="streak" class="sortable num">Série l.</th>
+                <th data-key="score" class="sortable num">Skóre</th>
+                <th data-key="fv" class="sortable num">Férová cena</th>
+                <th data-key="zone" class="sortable num">Nákupní zóna</th>
+                <th data-key="dist" class="sortable num">Do zóny</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="results" class="results"></section>
   </main>
 
