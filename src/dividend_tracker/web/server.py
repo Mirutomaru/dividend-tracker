@@ -37,7 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..data.db import Database
+from ..data.db import DEFAULT_DB_PATH, Database
 from ..data.fetcher import DataFetchError
 from ..data.sync import sync_all
 from ..data.watchlist import build_watchlist_rows
@@ -46,9 +46,6 @@ from ..pipeline import analyze_ticker
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-
-#: Výchozí cesta lokální databáze (přesahuje restarty — cache-first úložiště).
-DEFAULT_DB_PATH = Path(os.environ.get("DIVTRACK_DB", "~/.cache/dividend-tracker/data.db")).expanduser()
 
 #: Přísný formát tickera — alfanumerika + tečka a pomlčka (BRK.B, BRK-B).
 TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")

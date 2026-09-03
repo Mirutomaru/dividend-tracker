@@ -13,6 +13,7 @@ při každém dotazu. Přístup je přes :class:`Database` (thread-safe, WAL re�
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
@@ -79,6 +80,11 @@ CREATE INDEX IF NOT EXISTS idx_div_cal_ticker  ON dividends_calendar (ticker, ex
 
 def _utc_day() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+#: Výchozí cesta lokální databáze — sdílená mezi CLI (``divtrack sync``),
+#: web GUI a nočním cronem. Překryje se environment proměnnou ``DIVTRACK_DB``.
+DEFAULT_DB_PATH = Path(os.environ.get("DIVTRACK_DB", "~/.cache/dividend-tracker/data.db")).expanduser()
 
 
 class Database:

@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -44,6 +44,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_web.add_argument("--host", default="127.0.0.1", help="bind adresa (výchozí 127.0.0.1)")
     p_web.add_argument("--port", type=int, default=8742, help="TCP port (výchozí 8742)")
 
+    p_sync = sub.add_parser(
+        "sync",
+        help="cache-first synchronizace dat do lokální DB (FMP + yfinance ceny)",
+    )
+    p_sync.add_argument("tickers", nargs="*", help="ticker(y); bez argumentu se syncne vše z DB")
+    p_sync.add_argument("--force", action="store_true", help="ignorovat TTL a stáhnout znovu")
+    p_sync.add_argument(
+        "--db", metavar="PATH", default=None,
+        help="cesta k databázi (výchozí ~/.cache/dividend-tracker/data.db)",
+    )
+
     args = parser.parse_args(_preprocess(argv if argv is not None else sys.argv[1:]))
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
@@ -64,6 +75,39 @@ def main(argv: Optional[List[str]] = None) -> int:
         except OSError as exc:
             print(f"Web server nelze spustit: {exc}", file=sys.stderr)
             return 1
+        return 0
+
+    if args.cmd == "sync":
+        from .data.db import DEFAULT_DB_PATH, Database
+        from .data.sync import sync_all
+
+        db = Database(args.db or DEFAULT_DB_PATH)
+        try:
+            tickers = [t.strip().upper() for t in (args.tickers or [])]
+            if not tickers:  # bez argumentu — vše, co je už v DB
+                tickers = sorted(s["ticker"] for s in db.list_stocks())
+            if not tickers:
+                print("Databáze je prázdná — zadejte tickery, např. divtrack sync KO JNJ", file=sys.stderr)
+                return 2
+
+            logging.getLogger("dividend_tracker.data").setLevel(logging.INFO)
+            print(f"Synchronizuji {len(tickers)} ticker(ů): {', '.join(tickers)}")
+            summary = sync_all(db, tickers, force=args.force)
+
+            counts = summary["counts"]
+            parts = [f"{k}: {v}" for k, v in sorted(counts.items()) if v]
+            print(f"Hotovo — {', '.join(parts) or 'bez změn'}")
+            usage = summary.get("fmp_usage") or {}
+            if usage.get("daily_limit"):
+                print(
+                    f"FMP: {usage['calls_used']}/{usage['daily_limit']} volání dnes "
+                    f"(zbývá {usage.get('remaining')})"
+                )
+            quotes = summary.get("quotes") or {}
+            if quotes:
+                print(f"Ceny aktualizovány: {', '.join(sorted(quotes))}")
+        finally:
+            db.close()
         return 0
 
     if args.cmd != "analyze":

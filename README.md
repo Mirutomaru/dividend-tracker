@@ -89,10 +89,19 @@ uloží všechny reporty do souboru. Analýza běží v pozadí — UI se nemrz�
 divtrack analyze KO JNJ MSFT            # zkratka bez podpříkazu funguje taky
 divtrack analyze KO --json report.json  # export do JSON
 divtrack analyze KO --required-return 9.5   # vlastní požadovaná výkonnost pro Gordon model
+
+# cache-first synchronizace dat do lokální DB (FMP fundamenty + yfinance ceny)
+divtrack sync KO JNJ MSFT               # explicitní tickery
+divtrack sync                           # vše, co je už v DB
+divtrack sync --force                   # ignorovat TTL a stáhnout znovu
 ```
 
-Výstup: srovnávací tabulka + detailní blok pro každý ticker (skóre, flagy, signály,
-metriky vs odvětví, férová cena a nákupní zóna).
+`sync` respektuje cache-first pravidla (fundamenty 72 h, dividendová historie 7 dní)
+a denní limit FMP — čerstvá data se nikdy neopakují. Výstup ukáže počty podle zdroje
+(cached/fmp/yfinance), stav FMP čítače a aktualizované ceny.
+
+Výstup `analyze`: srovnávací tabulka + detailní blok pro každý ticker (skóre, flagy,
+signály, metriky vs odvětví, férová cena a nákupní zóna).
 
 ## Použití — Web GUI
 
@@ -147,6 +156,15 @@ Datové schéma (minimální, dle zadání): `stocks` (ticker, name, currency, e
 last_fundamental_update), `dividends_history` (ex_date, payment_date, record_date,
 amount, frequency), `dividends_calendar`, `quotes` (price, change, volume, timestamp)
 a `api_usage` (denní čítač volání per provider).
+
+### Noční automatický sync (volitelné)
+
+Doporučený režim: FMP jednou denně v noci do DB + ceny přes yfinance. Po schválení
+se nainstaluje do systémového cronu (02:30, log do `~/.cache/dividend-tracker/sync.log`):
+
+```cron
+30 2 * * * cd /home/ai/Prace/projekty/dividend-tracker && .venv/bin/python -m dividend_tracker.cli sync >> ~/.cache/dividend-tracker/sync.log 2>&1
+```
 
 ## JSON schéma reportu (výběr)
 
