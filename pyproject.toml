@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dividend-tracker"
+version = "0.1.0"
+description = "Profesionální tracker a valuační analyzátor dividendových akcií (GUI + CLI)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Petr" }]
+dependencies = [
+    "yfinance>=0.2.40",
+    "pandas>=2.0",
+    "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+divtrack = "dividend_tracker.cli:main"
+divtrack-gui = "dividend_tracker.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
