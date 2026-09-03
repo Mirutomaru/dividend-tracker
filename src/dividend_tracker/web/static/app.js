@@ -40,6 +40,8 @@ const alertForm = $("#alert-form");
 const alertTickerInput = $("#alert-ticker");
 const alertConditionSel = $("#alert-condition");
 const alertThresholdInput = $("#alert-threshold");
+const exportWlBtn = $("#export-wl-btn");
+const exportAnalysisBtn = $("#export-analysis-btn");
 
 let alertRows = [];
 
@@ -291,9 +293,11 @@ async function loadWatchlist() {
       watchlistSection.classList.remove("hidden");
       renderWatchlist();
       emptyState.classList.add("hidden");
+      exportWlBtn.classList.remove("hidden"); // CSV export dostupný jen s daty v DB
     } else {
       watchlistSection.classList.add("hidden");
       emptyState.classList.remove("hidden");
+      exportWlBtn.classList.add("hidden");
     }
   } catch {
     /* server nedostupný — zkusit znovu při dalším načtení */
@@ -736,6 +740,7 @@ async function startAnalysis(tickers) {
   setBusy(true);
   resultsEl.innerHTML = "";
   tableBody.innerHTML = "";
+  exportAnalysisBtn.classList.add("hidden"); // starý job už neplatí — export až po nových reportech
   emptyState.classList.add("hidden");
   progressEl.classList.remove("hidden");
   progressTitle.textContent = `Analyzuji ${tickers.length} ticker(ů)…`;
@@ -776,6 +781,7 @@ function pollJob(jobId, total) {
       if (job.results.length) {
         tableSection.classList.remove("hidden");
         renderTable(job.results.map(rowFromEntry));
+        setAnalysisExport(jobId); // CSV export dostupný, jakmile je aspoň 1 report
       }
 
       progressTitle.textContent = `Analyzuji… (${job.done}/${total})`;
@@ -790,6 +796,13 @@ function pollJob(jobId, total) {
       /* dočasná chyba sítě — zkusit znovu při dalším ticku */
     }
   }, 1500);
+}
+
+function setAnalysisExport(jobId) {
+  // CSV export výsledků analýzy — odkaz na endpoint serveru (jen hotové reporty).
+  if (!jobId || !exportAnalysisBtn) return;
+  exportAnalysisBtn.href = `/api/export/analysis/${encodeURIComponent(jobId)}.csv`;
+  exportAnalysisBtn.classList.remove("hidden");
 }
 
 function animateRing(circle) {

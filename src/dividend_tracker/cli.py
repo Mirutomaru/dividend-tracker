@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio", "alert"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio", "alert", "export"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -113,6 +113,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_al.add_argument("--threshold", type=float, default=None, help="prahová cena pro below/above")
     p_al.add_argument("--id", dest="alert_id", type=int, default=None, help="ID upozornění (remove)")
     p_al.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
+
+    p_ex = sub.add_parser("export", help="CSV export — watchlist z DB nebo hloubková analýza")
+    p_ex.add_argument(
+        "action", choices=["watchlist", "analysis"],
+        help="watchlist = srovnávací řádky přímo z DB (offline); analysis = hloubkové reporty tickerů",
+    )
+    p_ex.add_argument("tickers", nargs="*", help="pro analysis: ticker(y) k analýze")
+    p_ex.add_argument("--file", metavar="PATH", default=None, help="výstupní CSV soubor (výchozí watchlist.csv / analysis.csv)")
+    p_ex.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
 
     p_cfg = sub.add_parser("config", help="zobrazit/nastavit konfiguraci (.env)")
     p_cfg.add_argument(
@@ -410,6 +419,51 @@ def main(argv: Optional[List[str]] = None) -> int:
                         print(t["message"])
         finally:
             db.close()
+        return 0
+
+    if args.cmd == "export":
+        from .data.db import DEFAULT_DB_PATH, Database
+        from .presentation.csv_export import export_analysis_csv, export_watchlist_csv
+
+        out = Path(args.file).expanduser() if args.file else (
+            Path("watchlist.csv") if args.action == "watchlist" else Path("analysis.csv")
+        )
+        if args.action == "watchlist":
+            db = Database(args.db or DEFAULT_DB_PATH)
+            try:
+                from .data.watchlist import build_watchlist_rows
+
+                rows = build_watchlist_rows(db)
+                if not rows:
+                    print("Watchlista je prázdná — nejdřív spusťte divtrack sync KO JNJ …", file=sys.stderr)
+                    return 2
+                path = export_watchlist_csv(rows, out)
+                print(f"Exportováno {len(rows)} řádků do: {path}")
+            finally:
+                db.close()
+        else:  # analysis — hloubková analýza (vyžaduje externí data)
+            tickers = [t.strip().upper() for t in args.tickers]
+            if not tickers:
+                print("Zadejte tickery, např. divtrack export analysis KO JNJ", file=sys.stderr)
+                return 2
+            reports: list[dict] = []
+            n_errors = 0
+            for i, tk in enumerate(tickers, 1):
+                print(f"[{i}/{len(tickers)}] Analyzuji {tk} …")
+                try:
+                    reports.append(analyze_ticker(tk))
+                except DataFetchError as exc:
+                    n_errors += 1
+                    print(f"  ✗ Nedostupná data: {exc}", file=sys.stderr)
+                except Exception as exc:  # noqa: BLE001 — chyba nesmí zastavit zbývající tickery
+                    log.exception("neočekávaná chyba při analýze %s", tk)
+                    n_errors += 1
+                    print(f"  ✗ Neočekávaná chyba: {exc}", file=sys.stderr)
+            if not reports:
+                print("Žádný ticker se nepodařilo analyzovat.", file=sys.stderr)
+                return 2
+            path = export_analysis_csv(reports, out)
+            print(f"Exportováno {len(reports)} report(ů) do: {path}" + (f" ({n_errors} selhalo)" if n_errors else ""))
         return 0
 
     if args.cmd == "config":

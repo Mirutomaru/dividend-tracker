@@ -407,3 +407,62 @@ def test_sync_empty_rejected(server):
     for payload in ({}, {"tickers": []}):
         status, body = _request(server, "POST", "/api/sync", payload)
         assert status == 400 and "error" in body, payload
+
+
+# ------------------------------------------------------------------ CSV export
+
+def test_export_watchlist_csv_endpoint(seeded_server):
+    """GET /api/export/watchlist.csv → text/csv s attachment a hlavičkou."""
+    conn = http.client.HTTPConnection(*seeded_server.split("//")[1].split(":"), timeout=5)
+    conn.request("GET", "/api/export/watchlist.csv")
+    resp = conn.getresponse()
+    raw = resp.read().decode("utf-8-sig")
+    ctype = resp.getheader("Content-Type", "")
+    disp = resp.getheader("Content-Disposition", "")
+    conn.close()
+    assert resp.status == 200
+    assert "text/csv" in ctype and 'filename="watchlist.csv"' in disp
+    lines = [ln for ln in raw.splitlines() if ln]
+    assert lines[0].startswith("ticker,name,currency")
+    # 2 tickery v DB → 2 data řádky + hlavička
+    assert len(lines) == 3
+
+
+def test_export_analysis_csv_flow(monkeypatch, server):
+    """Hotový analytický job → CSV export reportů."""
+    from dividend_tracker import web as web_pkg
+
+    monkeypatch.setattr(
+        web_pkg.server, "analyze_ticker",
+        lambda t, **kw: {
+            "ticker": t,
+            "company": {"name": f"Firma {t}", "sector": "Tech"},
+            "price_current": 10.0,
+            "score": {"total_0_100": 55.0},
+            "fair_value": {"fair_value": 12.0, "verdict": "undervalued"},
+        },
+    )
+
+    status, body = _request(server, "POST", "/api/analyze", {"tickers": ["KO"]})
+    assert status == 202
+    job_id = body["job_id"]
+    _wait_job(server, job_id)
+
+    conn = http.client.HTTPConnection(*server.split("//")[1].split(":"), timeout=5)
+    conn.request("GET", f"/api/export/analysis/{job_id}.csv")
+    resp = conn.getresponse()
+    raw = resp.read().decode("utf-8-sig")
+    ctype = resp.getheader("Content-Type", "")
+    disp = resp.getheader("Content-Disposition", "")
+    conn.close()
+    assert resp.status == 200 and "text/csv" in ctype
+    assert f'filename="analysis_{job_id}.csv"' in disp
+    lines = [ln for ln in raw.splitlines() if ln]
+    assert lines[0].startswith("ticker,name,sector")
+    # jeden report → ticker KO + férová cena 12
+    assert "KO" in lines[1] and "Firma KO" in lines[1]
+
+
+def test_export_analysis_unknown_job_404(server):
+    status, body = _request(server, "GET", "/api/export/analysis/neexistujici.csv")
+    assert status == 404 and "error" in body

@@ -179,6 +179,15 @@ class WebApp(BaseHTTPRequestHandler):
     def _send_error_json(self, status: int, message: str) -> None:
         self._send_json({"error": message}, status=status)
 
+    def _send_csv(self, body: bytes, filename: str) -> None:
+        """Odešle CSV soubor ke stažení (Content-Disposition attachment)."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(body)
+
     # ------------------------------------------------------------------ GET
 
     def do_GET(self) -> None:  # noqa: N802 — API http.server
@@ -210,6 +219,13 @@ class WebApp(BaseHTTPRequestHandler):
                     }
                 )
                 return
+            if path == "/api/export/watchlist.csv":
+                self._handle_export_watchlist_csv()
+                return
+            if path.startswith("/api/export/analysis/") and path.endswith(".csv"):
+                job_id = path[len("/api/export/analysis/") : -len(".csv")]
+                self._handle_export_analysis_csv(job_id)
+                return
             if path in ("/", "/index.html"):
                 self._send_file(STATIC_DIR / "index.html")
                 return
@@ -232,6 +248,31 @@ class WebApp(BaseHTTPRequestHandler):
         report = build_portfolio_report(self.db)
         target = build_income_target_report(self.db)
         self._send_json({"portfolio": report, "income_target": target})
+
+    def _handle_export_watchlist_csv(self) -> None:
+        """CSV export watchlistu přímo z lokální DB (bez externích volání)."""
+        from ..presentation.csv_export import watchlist_csv_text
+
+        rows = build_watchlist_rows(self.db)
+        body = watchlist_csv_text(rows).encode("utf-8")
+        self._send_csv(body, "watchlist.csv")
+
+    def _handle_export_analysis_csv(self, job_id: str) -> None:
+        """CSV export výsledků analytického jobu (jen hotové reporty)."""
+        from ..presentation.csv_export import analysis_csv_text
+
+        job = self.jobs.get(job_id)
+        if job is None:
+            self._send_error_json(404, f"Job {job_id!r} nebyl nalezen.")
+            return
+        reports = [e["report"] for e in job.results if "report" in e]
+        if not reports:
+            self._send_error_json(404, "Job nemá žádné hotové reporty k exportu.")
+            return
+        body = analysis_csv_text(reports).encode("utf-8")
+        safe_id = "".join(c for c in job_id if c.isalnum() or c in "-_")[:32]
+        self._send_csv(body, f"analysis_{safe_id}.csv")
+
 
     def _handle_alerts_get(self) -> None:
         """Seznam upozornění + aktuální ceny pro kontext (vše z lokální DB)."""
