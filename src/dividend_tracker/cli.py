@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from .data.fetcher import DataFetchError
@@ -17,7 +18,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web", "sync"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -54,6 +55,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--db", metavar="PATH", default=None,
         help="cesta k databázi (výchozí ~/.cache/dividend-tracker/data.db)",
     )
+
+    p_watch = sub.add_parser("watch", help="správa trvalé watchlisty (souborová záloha)")
+    p_watch.add_argument(
+        "action", choices=["add", "remove", "list", "import", "export"],
+        help="add/remove tickery, list výpis, import obnova ze souboru, export záloha do souboru",
+    )
+    p_watch.add_argument("tickers", nargs="*", help="ticker(y) pro add/remove")
+    p_watch.add_argument("--note", default=None, help="poznámka k tickeru (add)")
+    p_watch.add_argument(
+        "--file", metavar="PATH", default=None,
+        help="cesta k záložnímu souboru (výchozí ~/.cache/dividend-tracker/watchlist.json)",
+    )
+    p_watch.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
 
     args = parser.parse_args(_preprocess(argv if argv is not None else sys.argv[1:]))
 
@@ -106,6 +120,55 @@ def main(argv: Optional[List[str]] = None) -> int:
             quotes = summary.get("quotes") or {}
             if quotes:
                 print(f"Ceny aktualizovány: {', '.join(sorted(quotes))}")
+        finally:
+            db.close()
+        return 0
+
+    if args.cmd == "watch":
+        from .data.db import DEFAULT_DB_PATH, Database
+        from .data.watchlist_store import (
+            DEFAULT_WATCHLIST_FILE,
+            export_watchlist_file,
+            import_watchlist_file,
+        )
+
+        db = Database(args.db or DEFAULT_DB_PATH)
+        file_path = Path(args.file).expanduser() if args.file else DEFAULT_WATCHLIST_FILE
+        try:
+            tickers = [t.strip().upper() for t in (args.tickers or [])]
+            if args.action == "add":
+                if not tickers:
+                    print("Zadejte alespoň jeden ticker, např. divtrack watch add KO JNJ", file=sys.stderr)
+                    return 2
+                for tk in tickers:
+                    db.upsert_watchlist(tk, note=args.note)
+                export_watchlist_file(db, file_path)
+                print(f"Přidáno do watchlisty: {', '.join(tickers)}")
+                print(f"Záloha uložena do: {file_path}")
+            elif args.action == "remove":
+                if not tickers:
+                    print("Zadejte alespoň jeden ticker, např. divtrack watch remove KO", file=sys.stderr)
+                    return 2
+                for tk in tickers:
+                    db.remove_from_watchlist(tk)
+                export_watchlist_file(db, file_path)
+                print(f"Odebráno z watchlisty: {', '.join(tickers)}")
+            elif args.action == "list":
+                rows = db.list_watchlist()
+                if not rows:
+                    print("Watchlista je prázdná.")
+                else:
+                    for r in rows:
+                        note = f"  — {r['note']}" if r.get("note") else ""
+                        print(f"{r['ticker']}{note}")
+                    print(f"\nCelkem: {len(rows)} ticker(ů)")
+            elif args.action == "import":
+                added = import_watchlist_file(db, file_path)
+                export_watchlist_file(db, file_path)  # sjednotit soubor se stavem DB
+                print(f"Obnoveno ze souboru: {added} nového tickeru (celkem {len(db.list_watchlist())})")
+            elif args.action == "export":
+                path = export_watchlist_file(db, file_path)
+                print(f"Záloha uložena do: {path}")
         finally:
             db.close()
         return 0

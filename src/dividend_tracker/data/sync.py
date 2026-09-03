@@ -231,7 +231,17 @@ def sync_fundamentals(
 
 
 def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str, Any]:
-    """Kompletní synchronizace: fundamenty (cache-first) + aktuální ceny do ``quotes``."""
+    """Kompletní synchronizace: fundamenty (cache-first) + aktuální ceny do ``quotes``.
+
+    Všechny tickery se zároveň automaticky přidají do **trvalé watchlisty** a ta se
+    zálohuje do souboru, aby seznam akcií nikdy nebyl ztracen.
+    """
+    from .watchlist_store import auto_add_to_watchlist
+
+    added = auto_add_to_watchlist(db, tickers)
+    if added:
+        log.info("watchlist rozšířena o %s ticker(ů)", added)
+
     fund = sync_fundamentals(db, tickers, force=force)
 
     from .quotes import sync_quotes  # lokální import — quotes táhne yfinance

@@ -18,21 +18,31 @@ from .sync import (
     sync_fundamentals,
 )
 from .watchlist import build_watchlist_rows
+from .watchlist_store import (
+    DEFAULT_WATCHLIST_FILE,
+    auto_add_to_watchlist,
+    export_watchlist_file,
+    import_watchlist_file,
+)
 
 __all__ = [
     "DataFetchError",
     "Database",
     "DAILY_LIMIT",
+    "DEFAULT_WATCHLIST_FILE",
     "DIVIDEND_TTL",
     "FMPCacheClient",
     "FMPError",
     "FMPLimitExceeded",
     "FUNDAMENTAL_TTL",
+    "auto_add_to_watchlist",
     "build_snapshot",
     "build_watchlist_rows",
+    "export_watchlist_file",
     "fetch_quotes",
     "get_api_key",
     "get_sector_benchmark",
+    "import_watchlist_file",
     "sync_all",
     "sync_fundamentals",
     "sync_quotes",

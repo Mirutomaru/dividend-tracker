@@ -75,6 +75,47 @@ CREATE TABLE IF NOT EXISTS api_usage (
 
 CREATE INDEX IF NOT EXISTS idx_div_hist_ticker ON dividends_history (ticker, ex_date DESC);
 CREATE INDEX IF NOT EXISTS idx_div_cal_ticker  ON dividends_calendar (ticker, ex_date ASC);
+
+-- ---------------------------------------------------------------------------
+-- Rozšíření: perzistentní watchlist, portfolio, historie cen, upozornění, nastavení
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS watchlist (
+    ticker      TEXT PRIMARY KEY,     -- sledovaný ticker (trvalý seznam)
+    added_at    REAL,                 -- epoch sekund přidání
+    note        TEXT                  -- volitelná poznámka uživatele
+);
+
+CREATE TABLE IF NOT EXISTS portfolio (
+    ticker      TEXT PRIMARY KEY,     -- držená pozice
+    shares      REAL NOT NULL DEFAULT 0,   -- počet akcií
+    avg_cost    REAL,               -- průměrná nákupní cena za akcii
+    currency    TEXT DEFAULT 'USD',
+    updated_at  REAL                 -- epoch sekund poslední změny pozice
+);
+
+CREATE TABLE IF NOT EXISTS price_history (
+    ticker      TEXT NOT NULL,
+    date        TEXT NOT NULL,       -- ISO YYYY-MM-DD (denní snapshot)
+    close       REAL,                -- uzavřecí / aktuální cena
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_price_hist_ticker ON price_history(ticker, date DESC);
+
+CREATE TABLE IF NOT EXISTS alerts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker          TEXT NOT NULL,
+    condition       TEXT NOT NULL,   -- below | above | buy_zone
+    threshold       REAL,            -- cena pro below/above; u buy_zone se ignoruje
+    active          INTEGER DEFAULT 1,
+    last_triggered  TEXT,            -- ISO datum posledního vyhodnocení (anti-duplikace)
+    created_at      REAL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,          -- např. income_target, tax_rate_us
+    value TEXT
+);
 """
 
 
@@ -365,6 +406,181 @@ class Database:
         used = d.get("calls_used", 0)
         d["remaining"] = (limit - used) if limit is not None else None
         return d
+
+    # ----------------------------------------------------------------- watchlist
+
+    def upsert_watchlist(self, ticker: str, note: Optional[str] = None) -> None:
+        """Přidá ticker do trvalé watchlisty (idempotentní)."""
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO watchlist (ticker, added_at, note) VALUES (?,?,?)
+                   ON CONFLICT(ticker) DO UPDATE SET
+                     note = COALESCE(excluded.note, watchlist.note)""",
+                (ticker.upper(), time.time(), note),
+            )
+
+    def remove_from_watchlist(self, ticker: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM watchlist WHERE ticker=?", (ticker.upper(),))
+
+    def list_watchlist(self) -> List[Dict[str, Any]]:
+        """Trvalá watchlista seřazená abecedně."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM watchlist ORDER BY ticker"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def is_in_watchlist(self, ticker: str) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM watchlist WHERE ticker=?", (ticker.upper(),)
+            ).fetchone()
+            return row is not None
+
+    # ----------------------------------------------------------------- portfolio
+
+    def upsert_position(
+        self,
+        ticker: str,
+        shares: float,
+        avg_cost: Optional[float] = None,
+        currency: Optional[str] = None,
+    ) -> None:
+        """Vloží/aktualizuje drženou pozici. ``shares <= 0`` pozici smaže."""
+        tk = ticker.upper()
+        if shares is not None and shares <= 0:
+            self.remove_position(tk)
+            return
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO portfolio (ticker, shares, avg_cost, currency, updated_at)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(ticker) DO UPDATE SET
+                     shares     = excluded.shares,
+                     avg_cost   = COALESCE(excluded.avg_cost, portfolio.avg_cost),
+                     currency   = COALESCE(excluded.currency, portfolio.currency),
+                     updated_at = excluded.updated_at""",
+                (tk, shares, avg_cost, currency or "USD", time.time()),
+            )
+
+    def remove_position(self, ticker: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM portfolio WHERE ticker=?", (ticker.upper(),))
+
+    def list_positions(self) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM portfolio ORDER BY ticker"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ----------------------------------------------------------- price_history
+
+    def record_price_snapshot(self, ticker: str, date_iso: str, close: Optional[float]) -> None:
+        """Zapíše (nebo aktualizuje) denní snapshot ceny pro dané datum."""
+        if close is None:
+            return
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO price_history (ticker, date, close) VALUES (?,?,?)
+                   ON CONFLICT(ticker, date) DO UPDATE SET close = excluded.close""",
+                (ticker.upper(), date_iso, close),
+            )
+
+    def get_price_history(self, ticker: str, days: int = 365) -> List[Dict[str, Any]]:
+        """Denní snapshoty za posledních ``days`` dní, nejnovější první."""
+        cutoff = (datetime.now(timezone.utc).timestamp() - days * 86400.0)
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT date, close FROM price_history WHERE ticker=? AND date >= ? ORDER BY date DESC",
+                (ticker.upper(), datetime.fromtimestamp(cutoff, tz=timezone.utc).date().isoformat()),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def price_stats_52w(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Statistika za posledních 365 dní: min/max cena, drawdown od maxima, percentil.
+
+        Percentil = podíl dnů, kdy byla cena NÍŽŠÍ než aktuální (0–100).
+        Vrátí ``None``, pokud v historii není žádný bod.
+        """
+        hist = self.get_price_history(ticker, days=365)
+        if not hist:
+            return None
+        closes = [r["close"] for r in hist if r["close"] is not None]
+        if not closes:
+            return None
+        lo, hi = min(closes), max(closes)
+        current = closes[0]  # nejnovější
+        drawdown_pct = ((current - hi) / hi * 100.0) if hi else None
+        below = sum(1 for c in closes if c < current)
+        percentile = round(below / len(closes) * 100.0, 1)
+        return {
+            "ticker": ticker.upper(),
+            "low_52w": lo,
+            "high_52w": hi,
+            "current": current,
+            "drawdown_from_high_pct": round(drawdown_pct, 2) if drawdown_pct is not None else None,
+            "percentile_52w": percentile,
+            "points": len(closes),
+        }
+
+    # -------------------------------------------------------------------- alerts
+
+    def add_alert(self, ticker: str, condition: str, threshold: Optional[float] = None) -> int:
+        """Přidá upozornění. ``condition`` ∈ {below, above, buy_zone}."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO alerts (ticker, condition, threshold, active, created_at) VALUES (?,?,?,?,?)",
+                (ticker.upper(), condition, threshold, 1, time.time()),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_alerts(self, active_only: bool = True) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            if active_only:
+                rows = conn.execute(
+                    "SELECT * FROM alerts WHERE active=1 ORDER BY ticker"
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM alerts ORDER BY ticker").fetchall()
+            return [dict(r) for r in rows]
+
+    def set_alert_active(self, alert_id: int, active: bool) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE alerts SET active=? WHERE id=?", (1 if active else 0, alert_id)
+            )
+
+    def remove_alert(self, alert_id: int) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM alerts WHERE id=?", (alert_id,))
+
+    def mark_alert_triggered(self, alert_id: int, date_iso: str) -> None:
+        """Označí datum posledního vyhodnocení (zabrání opakovanému upozornění)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE alerts SET last_triggered=? WHERE id=?", (date_iso, alert_id)
+            )
+
+    # ------------------------------------------------------------------ settings
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO settings (key, value) VALUES (?,?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                (key, value),
+            )
+
+    def delete_setting(self, key: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM settings WHERE key=?", (key,))
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
