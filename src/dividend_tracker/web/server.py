@@ -37,7 +37,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..data.db import DEFAULT_DB_PATH, Database
+from ..config import load_env as _load_env
+
+# Načti .env PŘED importem datových modulů (DEFAULT_DB_PATH / FMP_API_KEY se
+# čtou z prostředí při importu). CLI to už udělal, ale přímé spuštění serveru
+# (python -m dividend_tracker.web.server) potřebuje vlastní načtení.
+_load_env()
+
+from ..data.db import DEFAULT_DB_PATH, Database  # noqa: E402
 from ..data.fetcher import DataFetchError
 from ..data.sync import sync_all
 from ..data.watchlist import build_watchlist_rows

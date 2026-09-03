@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional
 
-from .data.fetcher import DataFetchError
+from .config import load_env as _load_env
+
+# Načti .env PŘED importem datových modulů — DEFAULT_DB_PATH a FMP_API_KEY se
+# čtou z prostředí při importu, takže konfigurace musí být už v os.environ.
+_load_env()
+
+from .data.fetcher import DataFetchError  # noqa: E402
 from .pipeline import analyze_ticker
 from .presentation.console import format_summary_table, format_ticker_block
 from .presentation.report import export_json
@@ -18,7 +25,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -68,6 +75,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="cesta k záložnímu souboru (výchozí ~/.cache/dividend-tracker/watchlist.json)",
     )
     p_watch.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
+
+    p_cfg = sub.add_parser("config", help="zobrazit/nastavit konfiguraci (.env)")
+    p_cfg.add_argument(
+        "action", nargs="?", choices=["show", "set", "unset"], default="show",
+        help="show (výchozí) / set KLIC=HODNOTA / unset KLIC",
+    )
+    p_cfg.add_argument("kv", nargs="*", help="pro set: KLIC=HODNOTA; pro unset: KLIC")
 
     args = parser.parse_args(_preprocess(argv if argv is not None else sys.argv[1:]))
 
@@ -171,6 +185,51 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"Záloha uložena do: {path}")
         finally:
             db.close()
+        return 0
+
+    if args.cmd == "config":
+        from .config import (
+            DEFAULT_ENV_FILE,
+            find_env_files,
+            mask_secret,
+            remove_env_value,
+            write_env_value,
+        )
+        from .data.db import DEFAULT_DB_PATH
+
+        action = args.action or "show"
+        if action == "show":
+            files = find_env_files()
+            print(f".env soubory: {', '.join(str(p) for p in files) or '(žádný — výchozí ' + str(DEFAULT_ENV_FILE) + ')'}")
+            key = os.environ.get("FMP_API_KEY", "").strip()
+            print(f"FMP_API_KEY:  {mask_secret(key)}")
+            print(f"DB:           {os.environ.get('DIVTRACK_DB', DEFAULT_DB_PATH)}")
+            from .data.watchlist_store import DEFAULT_WATCHLIST_FILE
+
+            print(f"Watchlist:    {DEFAULT_WATCHLIST_FILE}")
+        elif action == "set":
+            if len(args.kv) != 1 or "=" not in args.kv[0]:
+                print("Použití: divtrack config set KLIC=HODNOTA", file=sys.stderr)
+                return 2
+            k, _, v = args.kv[0].partition("=")
+            allowed = {"FMP_API_KEY", "DIVTRACK_DB", "DIVTRACK_WATCHLIST"}
+            if k.strip() not in allowed:
+                print(f"Neznámý klíč '{k}'. Povolené: {', '.join(sorted(allowed))}", file=sys.stderr)
+                return 2
+            path = write_env_value(k.strip(), v.strip())
+            os.environ[k.strip()] = v.strip()
+            shown = mask_secret(v) if k == "FMP_API_KEY" else v
+            print(f"Nastaveno {k}={shown} → {path}")
+        elif action == "unset":
+            if len(args.kv) != 1:
+                print("Použití: divtrack config unset KLIC", file=sys.stderr)
+                return 2
+            k = args.kv[0].strip()
+            if remove_env_value(k):
+                os.environ.pop(k, None)
+                print(f"Odebráno {k} z .env")
+            else:
+                print(f"{k} nebyl v .env nalezen.")
         return 0
 
     if args.cmd != "analyze":
