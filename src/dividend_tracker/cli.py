@@ -59,6 +59,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_sync.add_argument("tickers", nargs="*", help="ticker(y); bez argumentu se syncne vše z DB")
     p_sync.add_argument("--force", action="store_true", help="ignorovat TTL a stáhnout znovu")
     p_sync.add_argument(
+        "--backfill", action="store_true",
+        help="doplnit historii cen za 1 rok (pro 52tídní percentil/drawdown)",
+    )
+    p_sync.add_argument(
         "--db", metavar="PATH", default=None,
         help="cesta k databázi (výchozí ~/.cache/dividend-tracker/data.db)",
     )
@@ -138,6 +142,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"Synchronizuji {len(tickers)} ticker(ů): {', '.join(tickers)}")
             summary = sync_all(db, tickers, force=args.force)
 
+            if args.backfill:
+                from .data.quotes import backfill_price_history
+
+                print("Doplňuji historii cen za 1 rok (52tídní percentil/drawdown)…")
+                bf = backfill_price_history(db, tickers)
+                print(f"Historie cen: {bf['points']} bodů pro {bf['tickers_with_data']} ticker(ů)")
+
             counts = summary["counts"]
             parts = [f"{k}: {v}" for k, v in sorted(counts.items()) if v]
             print(f"Hotovo — {', '.join(parts) or 'bez změn'}")
@@ -149,7 +160,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 )
             quotes = summary.get("quotes") or {}
             if quotes:
-                print(f"Ceny aktualizovány: {', '.join(sorted(quotes))}")
+                print(
+                    f"Ceny aktualizovány: {quotes.get('updated', 0)} ticker(ů)"
+                    + (f", selhaly: {quotes['failed']}" if quotes.get("failed") else "")
+                )
         finally:
             db.close()
         return 0

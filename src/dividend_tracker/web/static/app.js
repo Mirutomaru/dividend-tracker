@@ -220,6 +220,21 @@ function wlCell(key, row) {
     }
     case "next_ex_date": return escapeHtml(v || "—");
     case "next_dividend": return fmtMoney(v, row.currency);
+    case "low_52w": return fmtMoney(v, row.currency);
+    case "high_52w": return fmtMoney(v, row.currency);
+    case "drawdown_from_high_pct": {
+      if (v == null) return "—";
+      // výrazný drawdown = potenciální příležitost → zeleně
+      const cls = v <= -15 ? "val-good" : v < 0 ? "" : "";
+      const sign = v > 0 ? "+" : "";
+      return `<span class="${cls}">${sign}${fmtPct(v)}</span>`;
+    }
+    case "percentile_52w": {
+      if (v == null) return "—";
+      // nízký percentil = cena blízko 52t dna → zeleně
+      const cls = v <= 20 ? "val-good" : "";
+      return `<span class="${cls}">${Number(v).toFixed(1)}</span>`;
+    }
     default: return v == null ? "—" : escapeHtml(String(v));
   }
 }
@@ -236,8 +251,9 @@ function renderWatchlist() {
 
   watchlistBody.innerHTML = sorted.map((row) => {
     const cells = ["ticker", "name", "sector", "price", "change", "volume", "dps_ttm",
-      "yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend"]
-      .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|growth_5y_pct|streak_years|next_dividend)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
+      "yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend",
+      "low_52w", "high_52w", "drawdown_from_high_pct", "percentile_52w"]
+      .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|growth_5y_pct|streak_years|next_dividend|low_52w|high_52w|drawdown_from_high_pct|percentile_52w)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
       .join("");
     return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
   }).join("");

@@ -109,6 +109,10 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
 
         nxt = _next_ex_date(db, tk)
 
+        # 52tídní statistika z denních snapshotů (price_history) — None, pokud
+        # v DB ještě není žádný bod (backfill / první dny provozu).
+        stats_52w = db.price_stats_52w(tk) or {}
+
         rows.append(
             {
                 "ticker": tk,
@@ -127,6 +131,11 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
                 "streak_years": streak,
                 "next_ex_date": nxt["ex_date"] if nxt else None,
                 "next_dividend": nxt["amount"] if nxt else None,
+                # 52tídní kontext pro rozhodování „když poklesne cena“:
+                "low_52w": stats_52w.get("low_52w"),
+                "high_52w": stats_52w.get("high_52w"),
+                "drawdown_from_high_pct": stats_52w.get("drawdown_from_high_pct"),
+                "percentile_52w": stats_52w.get("percentile_52w"),
             }
         )
     return rows

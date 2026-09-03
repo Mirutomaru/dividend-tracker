@@ -71,9 +71,17 @@ def fetch_quotes(tickers: List[str]) -> Dict[str, Dict[str, Optional[float]]]:
 
 
 def sync_quotes(db: Database, tickers: List[str]) -> Dict[str, int]:
-    """Aktualizuje tabulku ``quotes`` a vrátí souhrn (updated / failed)."""
+    """Aktualizuje tabulku ``quotes`` a zároveň zapíše **denní snapshot** do ``price_history``.
+
+    Snapshot je idempotentní (ON CONFLICT na ticker+date) — opakovaný sync ve stejný
+    den jen aktualizuje hodnotu. Z historie se počítá 52tídní rozsah, drawdown a
+    percentil ceny (viz :meth:`Database.price_stats_52w`).
+    """
+    from datetime import date
+
     quotes = fetch_quotes(tickers)
     updated = 0
+    today = date.today().isoformat()
     for tk in tickers:
         q = quotes.get(tk)
         if q is None or q["price"] is None:
@@ -81,8 +89,73 @@ def sync_quotes(db: Database, tickers: List[str]) -> Dict[str, int]:
         db.upsert_quote(
             tk, q["price"], change=q["change"], volume=int(q["volume"]) if q["volume"] else None
         )
+        db.record_price_snapshot(tk, today, q["price"])
         updated += 1
     return {"updated": updated, "failed": len(tickers) - updated}
 
 
-__all__ = ["fetch_quotes", "sync_quotes"]
+def fetch_price_history(tickers: List[str], days: int = 365) -> Dict[str, List[tuple]]:
+    """Stáhne denní uzavírací ceny za posledních ``days`` dní (batch yfinance).
+
+    Vrátí ``{ticker: [(date_iso, close), ...]}`` — nejstarší první. Chybějící
+    tickery se nevrátí; chyba u jednoho nezahodí celou dávku.
+    """
+    import yfinance as yf
+
+    out: Dict[str, List[tuple]] = {}
+    if not tickers:
+        return out
+
+    period = "1y" if days <= 365 else f"{max(2, days // 365)}y"
+    try:
+        data = yf.download(
+            tickers, period=period, interval="1d", group_by="ticker", progress=False, auto_adjust=True
+        )
+    except Exception as exc:  # noqa: BLE001 — provider vrhá různé typy (timeout, 429)
+        log.warning("batch download historie cen selhal (%s), zkusím po jednotlivých tickerech", exc)
+        data = None
+
+    if data is not None and not data.empty:
+        for tk in tickers:
+            try:
+                sub = data[tk].dropna(how="all") if tk in getattr(data, "columns", []) else None
+                if sub is None or sub.empty or "Close" not in sub.columns:
+                    continue
+                closes = sub["Close"].dropna()
+                out[tk] = [(ts.date().isoformat(), float(v)) for ts, v in closes.items()]
+            except (KeyError, IndexError, TypeError) as exc:
+                log.warning("historie cen pro %s se nepodařilo vyčíst z batch dat: %s", tk, exc)
+
+    # Fallback po jednotlivých tickerech.
+    for tk in tickers:
+        if tk in out:
+            continue
+        try:
+            hist = yf.Ticker(tk).history(period=period, interval="1d", auto_adjust=True)
+            if hist is not None and len(hist):
+                closes = hist["Close"].dropna()
+                out[tk] = [(ts.date().isoformat(), float(v)) for ts, v in closes.items()]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("historie cen pro %s nedostupná ani jednotlivě: %s", tk, exc)
+
+    return out
+
+
+def backfill_price_history(db: Database, tickers: List[str], days: int = 365) -> Dict[str, int]:
+    """Doplní historii cen do ``price_history`` (pro 52tídní statistiky).
+
+    Používá se při prvním spuštění / po dlouhé pauze — bez backfillu by percentil
+    a drawdown vyžadovaly rok denních snapshotů. Vrátí počet zapísaných bodů.
+    """
+    hist = fetch_price_history(tickers, days=days)
+    total = 0
+    for tk in tickers:
+        points = hist.get(tk) or []
+        for date_iso, close in points:
+            db.record_price_snapshot(tk, date_iso, close)
+        if points:
+            total += len(points)
+    return {"points": total, "tickers_with_data": len(hist)}
+
+
+__all__ = ["fetch_quotes", "sync_quotes", "fetch_price_history", "backfill_price_history"]
