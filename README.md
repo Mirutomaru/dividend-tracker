@@ -51,7 +51,10 @@ src/dividend_tracker/
 │   ├── report.py           # normalizované JSON + export
 │   └── console.py          # tabulky a detailní bloky
 ├── gui/app.py              # Tkinter GUI (analýza v pozadí vlákne)
-└── cli.py                  # divtrack analyze / divtrack gui
+├── web/                    # Web GUI — lehký HTTP server na stdlib, bez závislostí
+│   ├── server.py           # JobManager + JSON API (/api/analyze, /api/jobs/<id>)
+│   └── static/             # index.html · style.css (Apple-style) · app.js
+└── cli.py                  # divtrack analyze / gui / web
 ```
 
 ## Instalace
@@ -85,6 +88,23 @@ divtrack analyze KO --required-return 9.5   # vlastní požadovaná výkonnost p
 
 Výstup: srovnávací tabulka + detailní blok pro každý ticker (skóre, flagy, signály,
 metriky vs odvětví, férová cena a nákupní zóna).
+
+## Použití — Web GUI
+
+```bash
+divtrack web                 # http://127.0.0.1:8742
+divtrack web --port 9000     # vlastní port
+```
+
+Moderní, čisté webové rozhraní (Apple-style design) bez jakýchkoli externích
+závislostí — běží na standardní knihovně Pythonu. Zadejte tickery oddělené mezerou
+(nebo čárkou), klikněte „Analyzovat“ a výsledky se postupně vykreslují jako karty:
+skóre dividendového zdraví (0–100) s bezpečnostním flagem, dividendové metriky,
+ocenění vs. odvětvový benchmark, finanční zdraví a férová cena s nákupní zónou.
+
+- Analýza běží asynchronně v pozadí (thread pool), UI se nezavěšuje.
+- Podpora automatického tmavého režimu (`prefers-color-scheme`).
+- Server je vázaný na `127.0.0.1` — určen pro lokální použití.
 
 ## JSON schéma reportu (výběr)
 

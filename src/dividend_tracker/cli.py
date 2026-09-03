@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -40,7 +40,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     sub.add_parser("gui", help="spustit Tkinter GUI aplikaci")
 
-    args = parser.parse_args(_preprocess(argv))
+    p_web = sub.add_parser("web", help="spustit webové GUI (lokální HTTP server)")
+    p_web.add_argument("--host", default="127.0.0.1", help="bind adresa (výchozí 127.0.0.1)")
+    p_web.add_argument("--port", type=int, default=8742, help="TCP port (výchozí 8742)")
+
+    args = parser.parse_args(_preprocess(argv if argv is not None else sys.argv[1:]))
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
@@ -51,6 +55,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"GUI nelze spustit (chybí tkinter): {exc}\nNa Debian/Ubuntu: sudo apt install python3-tk", file=sys.stderr)
             return 1
         gui_main()
+        return 0
+
+    if args.cmd == "web":
+        from .web.server import main as web_main
+        try:
+            web_main(host=args.host, port=args.port)
+        except OSError as exc:
+            print(f"Web server nelze spustit: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     if args.cmd != "analyze":
