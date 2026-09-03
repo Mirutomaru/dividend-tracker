@@ -293,6 +293,87 @@ def test_portfolio_endpoint_empty(server):
     assert body["income_target"] == {"configured": False}
 
 
+# ------------------------------------------------------------------ alerts (DB)
+
+@pytest.fixture()
+def alerts_server(tmp_path):
+    """Server s cenou v quotes pro testy upozornění."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "alerts_web.db")
+    db.upsert_stock("KO", name="Coca-Cola", currency="USD")
+    db.upsert_quote("KO", current_price=60.0)
+    httpd = create_app(port=0, db_path=db.path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    yield f"http://{host}:{port}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_alerts_endpoint_empty(server):
+    status, body = _request(server, "GET", "/api/alerts")
+    assert status == 200
+    assert body["alerts"] == []
+
+
+def test_alert_create_list_delete_flow(alerts_server):
+    """POST → GET (viditelné) → DELETE (zmizí)."""
+    # vytvoření pravidla below s prahem
+    status, body = _request(alerts_server, "POST", "/api/alerts",
+                            {"ticker": "ko", "condition": "below", "threshold": 65.0})
+    assert status == 201 and body["alert"]["id"] >= 1
+    alert_id = body["alert"]["id"]
+
+    # viditelné v seznamu, ticker normalizovaný na uppercase
+    status, body = _request(alerts_server, "GET", "/api/alerts")
+    assert status == 200 and len(body["alerts"]) == 1
+    row = body["alerts"][0]
+    assert row["ticker"] == "KO" and row["condition"] == "below"
+
+    # smazání
+    status, _ = _request(alerts_server, "DELETE", f"/api/alerts/{alert_id}")
+    assert status == 200
+    status, body = _request(alerts_server, "GET", "/api/alerts")
+    assert body["alerts"] == []
+
+
+def test_alert_buy_zone_needs_no_threshold(alerts_server):
+    status, body = _request(alerts_server, "POST", "/api/alerts",
+                            {"ticker": "KO", "condition": "buy_zone"})
+    assert status == 201 and body["alert"]["threshold"] is None
+
+
+def test_alert_invalid_condition_rejected(server):
+    status, body = _request(server, "POST", "/api/alerts",
+                            {"ticker": "KO", "condition": "sideways", "threshold": 5})
+    assert status == 400 and "error" in body
+
+
+def test_alert_missing_threshold_rejected(server):
+    status, body = _request(server, "POST", "/api/alerts",
+                            {"ticker": "KO", "condition": "below"})
+    assert status == 400 and "error" in body
+
+
+def test_alert_invalid_ticker_rejected(server):
+    status, body = _request(server, "POST", "/api/alerts",
+                            {"ticker": "../etc/passwd", "condition": "below", "threshold": 5})
+    assert status == 400 and "error" in body
+
+
+def test_alert_delete_unknown_id_404(alerts_server):
+    status, _ = _request(alerts_server, "DELETE", "/api/alerts/9999")
+    # neexistující ID → remove_alert je no-op; endpoint vrací ok (idempotentní)
+    assert status == 200
+
+
+def test_alert_delete_bad_id_400(server):
+    status, _ = _request(server, "DELETE", "/api/alerts/abc")
+    assert status == 400
+
+
 # ------------------------------------------------------------------ sync
 
 def test_sync_flow_with_mocked_providers(monkeypatch, server):

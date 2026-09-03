@@ -234,7 +234,9 @@ def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str,
     """Kompletní synchronizace: fundamenty (cache-first) + aktuální ceny do ``quotes``.
 
     Všechny tickery se zároveň automaticky přidají do **trvalé watchlisty** a ta se
-    zálohuje do souboru, aby seznam akcií nikdy nebyl ztracen.
+    zálohuje do souboru, aby seznam akcií nikdy nebyl ztracen. Po aktualizaci cen se
+    vyhodnotí aktivní **upozornění** (max. 1× denně na pravidlo) — vyhodnocená se
+    vrátí v ``summary["alerts_triggered"]`` a logují se, aby je mohl zobrazit i cron.
     """
     from .watchlist_store import auto_add_to_watchlist
 
@@ -252,7 +254,17 @@ def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str,
     except Exception as exc:  # noqa: BLE001 — ceny jsou doplňkové, nesmí zabít fundamenty
         log.error("synchronizace cen selhala: %s", exc)
 
-    return {**fund, "quotes": quote_stats}
+    from .alerts import evaluate_alerts  # lokální import — kontrola proti cenám v DB
+
+    triggered: List[Dict[str, Any]] = []
+    try:
+        triggered = evaluate_alerts(db)
+        for item in triggered:
+            log.info("ALERT %s", item["message"])
+    except Exception as exc:  # noqa: BLE001 — upozornění nesmí zabít sync
+        log.error("vyhodnocení upozornění selhalo: %s", exc)
+
+    return {**fund, "quotes": quote_stats, "alerts_triggered": triggered}
 
 
 __all__ = [

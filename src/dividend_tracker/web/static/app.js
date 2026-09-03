@@ -33,6 +33,15 @@ const targetBox = $("#income-target-box");
 const targetLabel = $("#target-progress-label");
 const targetBar = $("#target-progress-bar");
 const targetDetail = $("#target-detail");
+const alertsSection = $("#alerts-section");
+const alertsBody = $("#alerts-body");
+const alertsCount = $("#alerts-count");
+const alertForm = $("#alert-form");
+const alertTickerInput = $("#alert-ticker");
+const alertConditionSel = $("#alert-condition");
+const alertThresholdInput = $("#alert-threshold");
+
+let alertRows = [];
 
 let pollTimer = null;
 let sortKey = "score";      // výchozí řazení: nejlepší skóre nahoře
@@ -384,6 +393,89 @@ async function loadPortfolio() {
     }
   } catch {
     /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+/* ------------------------------ Upozornění (alerts) ------------------------------ */
+
+const ALERT_CONDITION_LABELS = { below: "klesne pod", above: "vystoupá nad", buy_zone: "nákupní zóna" };
+
+function renderAlerts() {
+  if (!alertRows.length) {
+    alertsSection.classList.add("hidden");
+    return;
+  }
+  alertsSection.classList.remove("hidden");
+  alertsCount.textContent = `${alertRows.length} pravidel`;
+  const sorted = [...alertRows].sort((a, b) => a.ticker.localeCompare(b.ticker));
+  alertsBody.innerHTML = sorted.map((r) => {
+    const thr = r.threshold != null ? fmtMoney(r.threshold) : "—";
+    const price = r.price != null ? fmtMoney(r.price) : "—";
+    // cena už splňuje podmínku → zvýraznit (příležitost!)
+    let hit = false;
+    if (r.active && r.price != null) {
+      if (r.condition === "below" && r.threshold != null) hit = r.price <= r.threshold;
+      else if (r.condition === "above" && r.threshold != null) hit = r.price >= r.threshold;
+    }
+    const cls = hit ? ' class="buy-zone-row"' : "";
+    return `<tr${cls}>
+      <td><strong>${escapeHtml(r.ticker)}</strong></td>
+      <td>${ALERT_CONDITION_LABELS[r.condition] || escapeHtml(r.condition)}${r.active ? "" : " (vypnuto)"}</td>
+      <td class="num">${thr}</td>
+      <td class="num">${price}</td>
+      <td>${escapeHtml(r.last_triggered || "—")}</td>
+      <td><button type="button" class="alert-remove-btn" data-alert-id="${r.id}" title="Smazat pravidlo">✕</button></td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadAlerts() {
+  try {
+    const res = await fetch("/api/alerts");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    alertRows = data.alerts || [];
+    renderAlerts();
+  } catch {
+    /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+async function submitAlert(e) {
+  e.preventDefault();
+  const ticker = alertTickerInput.value.trim().toUpperCase();
+  if (!ticker) return;
+  const condition = alertConditionSel.value;
+  const thresholdRaw = alertThresholdInput.value;
+  const payload = { ticker, condition };
+  if (condition !== "buy_zone" && thresholdRaw !== "") payload.threshold = Number(thresholdRaw);
+  try {
+    const res = await fetch("/api/alerts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || `Chyba při přidávání upozornění (HTTP ${res.status})`);
+      return;
+    }
+    alertTickerInput.value = "";
+    alertThresholdInput.value = "";
+    await loadAlerts();
+  } catch {
+    alert("Server nedostupný — upozornění se nepodařilo přidat.");
+  }
+}
+
+async function removeAlert(id) {
+  try {
+    const res = await fetch(`/api/alerts/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 405) throw new Error(`HTTP ${res.status}`);
+    alertRows = alertRows.filter((r) => r.id !== id);
+    renderAlerts();
+  } catch {
+    await loadAlerts(); // server nepodporuje DELETE → alespoň překreslit aktuální stav
   }
 }
 
@@ -766,8 +858,19 @@ tableBody.addEventListener("click", (e) => {
 
 refreshFmpBtn.addEventListener("click", loadFmpStatus);
 
-// Start: načíst watchlist z DB + portfolio + stav FMP limitu.
+// Přidání upozornění (formulář).
+alertForm.addEventListener("submit", submitAlert);
+
+// Smazání pravidla — delegace na tlačítko v řádku.
+alertsBody.addEventListener("click", (e) => {
+  const btnEl = e.target.closest(".alert-remove-btn");
+  if (!btnEl) return;
+  removeAlert(Number(btnEl.dataset.alertId));
+});
+
+// Start: načíst watchlist z DB + portfolio + upozornění + stav FMP limitu.
 loadWatchlist();
 loadPortfolio();
+loadAlerts();
 loadFmpStatus();
 input.focus();

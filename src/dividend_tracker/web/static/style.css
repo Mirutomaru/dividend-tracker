@@ -424,6 +424,20 @@ tr.in-zone td:first-child::before { content: "●"; color: var(--green); margin-
 .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--blue), var(--green)); border-radius: 999px; transition: width 0.4s ease; }
 .pf-target-detail { font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
 
+/* ---------------- Alerts (upozornění) ---------------- */
+
+#alert-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+#alert-form input, #alert-form select {
+  padding: 7px 10px; border-radius: 10px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary);
+}
+#alert-form input:focus, #alert-form select:focus { outline: none; border-color: var(--blue); }
+.alert-remove-btn {
+  border: none; background: transparent; cursor: pointer; font-size: 14px;
+  color: var(--text-secondary); padding: 2px 6px; border-radius: 8px;
+}
+.alert-remove-btn:hover { background: rgba(255,59,48,0.12); color: #ff3b30; }
+
 /* ---------------- Footer ---------------- */
 
 .footer {

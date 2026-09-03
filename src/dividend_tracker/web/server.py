@@ -196,6 +196,9 @@ class WebApp(BaseHTTPRequestHandler):
             if path == "/api/portfolio":
                 self._handle_portfolio()
                 return
+            if path == "/api/alerts":
+                self._handle_alerts_get()
+                return
             if path == "/api/fmp-status":
                 from ..data.fmp import FMPCacheClient
 
@@ -230,6 +233,40 @@ class WebApp(BaseHTTPRequestHandler):
         target = build_income_target_report(self.db)
         self._send_json({"portfolio": report, "income_target": target})
 
+    def _handle_alerts_get(self) -> None:
+        """Seznam upozornění + aktuální ceny pro kontext (vše z lokální DB)."""
+        rows = []
+        for a in self.db.list_alerts(active_only=False):
+            quote = self.db.get_quote(a["ticker"]) or {}
+            price = quote.get("current_price")
+            rows.append({**a, "price": float(price) if price else None})
+        self._send_json({"alerts": rows, "count": len(rows)})
+
+    def _handle_alerts_post(self, payload: dict) -> None:
+        """Přidá upozornění (ticker + condition [+ threshold])."""
+        from ..data.alerts import VALID_CONDITIONS, add_alert
+
+        ticker = str(payload.get("ticker") or "").strip().upper()
+        condition = payload.get("condition") or "below"
+        if not ticker:
+            self._send_error_json(400, "Chybí 'ticker'.")
+            return
+        if not TICKER_RE.match(ticker):
+            self._send_error_json(400, f"Neplatný ticker: {payload.get('ticker')!r}")
+            return
+        if condition not in VALID_CONDITIONS:
+            self._send_error_json(400, f"Neplatná podmínka {condition!r}. Povolené: {', '.join(VALID_CONDITIONS)}")
+            return
+        threshold = payload.get("threshold")
+        try:
+            threshold_f = float(threshold) if threshold is not None else None
+            aid = add_alert(self.db, ticker, condition, threshold_f)
+        except ValueError as exc:
+            self._send_error_json(400, str(exc))
+            return
+        alert = next((a for a in self.db.list_alerts(active_only=False) if a["id"] == aid), None)
+        self._send_json({"ok": True, "alert": alert}, status=201)
+
     def _handle_job_get(self, path: str) -> None:
         job_id = path.rsplit("/", 1)[-1]
         job = self.jobs.get(job_id)
@@ -253,6 +290,16 @@ class WebApp(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/sync":
             self._handle_sync()
+            return
+        if path == "/api/alerts":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b""
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except (ValueError, UnicodeDecodeError):
+                self._send_error_json(400, "Neplatné JSON tělo.")
+                return
+            self._handle_alerts_post(payload)
             return
         if path != "/api/analyze":
             self._send_error_json(404, "Nenalezeno.")
@@ -316,6 +363,21 @@ class WebApp(BaseHTTPRequestHandler):
         job = self.jobs.submit_sync(self.db, tickers, force)
         log.info("sync job %s: cache-first sync pro %s (force=%s)", job.id, ", ".join(tickers), force)
         self._send_json({"job_id": job.id}, status=202)
+
+    # ----------------------------------------------------------------- DELETE
+
+    def do_DELETE(self) -> None:  # noqa: N802 — API http.server
+        path = self.path.split("?", 1)[0]
+        if not (path.startswith("/api/alerts/") and path != "/api/alerts"):
+            self._send_error_json(404, "Nenalezeno.")
+            return
+        try:
+            alert_id = int(path.rsplit("/", 1)[-1])
+        except ValueError:
+            self._send_error_json(400, "Neplatné ID upozornění.")
+            return
+        self.db.remove_alert(alert_id)
+        self._send_json({"ok": True})
 
     # ------------------------------------------------------------------ log
 

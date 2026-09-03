@@ -7,6 +7,7 @@
 - :mod:`sync`     — cache-first orchestrace (TTL 72 h fundamenty / 7 dní dividendy, fallback yfinance)
 """
 
+from .alerts import VALID_CONDITIONS, add_alert, evaluate_alerts
 from .db import Database
 from .fetcher import DataFetchError, build_snapshot, get_sector_benchmark
 from .fmp import DAILY_LIMIT, FMPCacheClient, FMPError, FMPLimitExceeded, get_api_key
@@ -36,9 +37,14 @@ __all__ = [
     "FMPError",
     "FMPLimitExceeded",
     "FUNDAMENTAL_TTL",
+    "VALID_CONDITIONS",
+    "add_alert",
     "auto_add_to_watchlist",
+    "build_income_target_report",
+    "build_portfolio_report",
     "build_snapshot",
     "build_watchlist_rows",
+    "evaluate_alerts",
     "export_watchlist_file",
     "fetch_quotes",
     "get_api_key",

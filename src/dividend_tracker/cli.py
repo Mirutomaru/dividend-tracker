@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio", "alert"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
 
@@ -95,6 +95,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     p_pf.add_argument("--yield-pct", type=float, default=None, help="očekávaný yield %% pro výpočet kapitálu")
     p_pf.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
+
+    p_al = sub.add_parser("alert", help="upozornění na cenu / nákupní zónu (kontrola proti cenám v DB)")
+    p_al.add_argument(
+        "action", choices=["add", "list", "remove", "check"],
+        help="add pravidlo, list výpis, remove smazat, check vyhodnotit nyní",
+    )
+    p_al.add_argument("ticker", nargs="?", help="ticker (add/remove)")
+    p_al.add_argument(
+        "--condition", choices=["below", "above", "buy_zone"], default=None,
+        help="podmínka: below/above prahová cena, buy_zone = férová cena podle výnosu (výchozí below)",
+    )
+    p_al.add_argument("--threshold", type=float, default=None, help="prahová cena pro below/above")
+    p_al.add_argument("--id", dest="alert_id", type=int, default=None, help="ID upozornění (remove)")
+    p_al.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
 
     p_cfg = sub.add_parser("config", help="zobrazit/nastavit konfiguraci (.env)")
     p_cfg.add_argument(
@@ -286,6 +300,57 @@ def main(argv: Optional[List[str]] = None) -> int:
                     )
                     if target.get("required_capital"):
                         print(f"Potřebný kapitál (yield {target['effective_yield_pct_used']}%): ~{target['required_capital']:,.0f}")
+        finally:
+            db.close()
+        return 0
+
+    if args.cmd == "alert":
+        from .data.alerts import VALID_CONDITIONS, add_alert, evaluate_alerts
+        from .data.db import DEFAULT_DB_PATH, Database
+
+        db = Database(args.db or DEFAULT_DB_PATH)
+        try:
+            action = args.action
+            if action == "add":
+                if not args.ticker:
+                    print("Zadejte ticker, např. divtrack alert add KO --condition below --threshold 65", file=sys.stderr)
+                    return 2
+                condition = args.condition or "below"
+                try:
+                    aid = add_alert(db, args.ticker.strip().upper(), condition, args.threshold)
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+                    return 2
+                cond_desc = {
+                    "below": f"pod {args.threshold}",
+                    "above": f"nad {args.threshold}",
+                    "buy_zone": "v nákupní zóně (férová cena)",
+                }[condition]
+                print(f"Přidáno upozornění #{aid}: {args.ticker.strip().upper()} — {cond_desc}")
+            elif action == "list":
+                rows = db.list_alerts(active_only=False)
+                if not rows:
+                    print("Žádná upozornění.")
+                else:
+                    for r in rows:
+                        thr = f" @ {r['threshold']}" if r.get("threshold") is not None else ""
+                        state = "aktivní" if r["active"] else "vypnuté"
+                        last = f", naposledy: {r['last_triggered']}" if r.get("last_triggered") else ""
+                        print(f"#{r['id']}  {r['ticker']:<6} {r['condition']}{thr}  ({state}{last})")
+                    print(f"\nCelkem: {len(rows)} upozornění")
+            elif action == "remove":
+                if args.alert_id is None:
+                    print("Zadejte ID: divtrack alert remove --id N (výpis: divtrack alert list)", file=sys.stderr)
+                    return 2
+                db.remove_alert(args.alert_id)
+                print(f"Upozornění #{args.alert_id} odstraněno.")
+            elif action == "check":
+                triggered = evaluate_alerts(db)
+                if not triggered:
+                    print("Žádné upozornění nebylo vyhodnoceno (ceny v DB, max. 1× denně na pravidlo).")
+                else:
+                    for t in triggered:
+                        print(t["message"])
         finally:
             db.close()
         return 0
