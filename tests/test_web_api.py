@@ -14,9 +14,27 @@ from dividend_tracker.web.server import JobManager, create_app
 
 
 @pytest.fixture()
-def server():
-    """Spustí HTTP server na náhodném portu a po testu ho ukončí."""
-    httpd = create_app(port=0)
+def server(tmp_path):
+    """Spustí HTTP server na náhodném portu s izolovanou DB; po testu ho ukončí."""
+    httpd = create_app(port=0, db_path=tmp_path / "web_test.db")
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    yield f"http://{host}:{port}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+@pytest.fixture()
+def seeded_server(tmp_path):
+    """Server s předvyplněnou DB (2 tickery) pro testy watchlist endpointu."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "seeded.db")
+    for tk, name in (("KO", "Coca-Cola"), ("JNJ", "Johnson & Johnson")):
+        db.upsert_stock(tk, name=name, currency="USD", sector="Consumer Defensive")
+        db.upsert_quote(tk, current_price=70.0 if tk == "KO" else 150.0)
+    httpd = create_app(port=0, db_path=db.path)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     host, port = httpd.server_address[:2]
@@ -197,3 +215,67 @@ def test_custom_params_forwarded(monkeypatch, server):
 def test_invalid_params_rejected(server):
     status, _ = _request(server, "POST", "/api/analyze", {"tickers": ["KO"], "required_return_pct": "osm"})
     assert status == 400
+
+
+# ------------------------------------------------------------------ watchlist (DB)
+
+def test_watchlist_endpoint_empty(seeded_server):
+    """Prázdná DB → prázdný seznam, ale endpoint funguje."""
+    from dividend_tracker.data.db import Database
+
+    # seeded_server má data; ověřit strukturu odpovědi.
+    status, body = _request(seeded_server, "GET", "/api/watchlist")
+    assert status == 200
+    assert isinstance(body["rows"], list) and len(body["rows"]) == 2
+    # výchozí abecední pořadí
+    assert [r["ticker"] for r in body["rows"]] == ["JNJ", "KO"]
+
+
+def test_watchlist_row_fields(seeded_server):
+    status, body = _request(seeded_server, "GET", "/api/watchlist")
+    row = body["rows"][0]
+    # Každý sledovaný atribut musí být přítomen (UI podle nich řadí).
+    for key in ("ticker", "name", "price", "yield_pct", "payout_pct", "growth_5y_pct",
+                "streak_years", "next_ex_date", "next_dividend", "quote_age_s"):
+        assert key in row, f"chybí atribut {key}"
+
+
+def test_fmp_status_endpoint(server):
+    status, body = _request(server, "GET", "/api/fmp-status")
+    assert status == 200
+    assert "configured" in body and "calls_used" in body and "daily_limit" in body
+
+
+# ------------------------------------------------------------------ sync
+
+def test_sync_flow_with_mocked_providers(monkeypatch, server):
+    """POST /api/sync → job; mockovaná synchronizace; výsledek obsahuje summary."""
+    from dividend_tracker import web as web_pkg
+
+    def fake_sync_all(db_, tickers, force=False):
+        # tvar odpovídá skutečnému sync_all: {results, counts, fmp_usage, quotes}
+        return {
+            "results": {t: "cached" for t in tickers},
+            "counts": {"fmp": 0, "yfinance": 0, "cached": len(tickers), "stale_cache": 0, "error": 0},
+            "fmp_usage": {"calls_used": 0, "daily_limit": None, "remaining": None},
+            "quotes": {},
+        }
+
+    monkeypatch.setattr(web_pkg.server, "sync_all", fake_sync_all)
+
+    status, body = _request(server, "POST", "/api/sync", {"tickers": ["KO", "JNJ"]})
+    assert status == 202 and "job_id" in body
+    job = _wait_job(server, body["job_id"])
+    assert job["status"] == "done"
+    assert job["summary"]["counts"]["cached"] == 2
+
+
+def test_sync_invalid_ticker_rejected(server):
+    status, body = _request(server, "POST", "/api/sync", {"tickers": ["BAD TICKER!"]})
+    assert status == 400 and "error" in body
+
+
+def test_sync_empty_rejected(server):
+    for payload in ({}, {"tickers": []}):
+        status, body = _request(server, "POST", "/api/sync", payload)
+        assert status == 400 and "error" in body, payload

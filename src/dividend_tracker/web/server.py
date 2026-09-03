@@ -12,6 +12,9 @@ Architektura:
   POST /api/analyze        {tickers: [...], required_return_pct?, use_benchmark?}
                            → 202 {job_id}
   GET  /api/jobs/<id>      {status, total, done, results: [{ticker, report|error}]}
+  GET  /api/watchlist      srovnávací řádky PŘÍMO Z LOKÁLNÍ DB (bez externích volání)
+  POST /api/sync           {tickers: [...], force?} → 202 {job_id} — cache-first sync do DB
+  GET  /api/fmp-status     stav čítače FMP denních volání (limit 250/den)
   =======================  =====================================================
 
 Bezpečnostní poznamky: server je určen pro lokální použití (výchozí bind
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -33,12 +37,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..data.db import Database
 from ..data.fetcher import DataFetchError
+from ..data.sync import sync_all
+from ..data.watchlist import build_watchlist_rows
 from ..pipeline import analyze_ticker
 
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+#: Výchozí cesta lokální databáze (přesahuje restarty — cache-first úložiště).
+DEFAULT_DB_PATH = Path(os.environ.get("DIVTRACK_DB", "~/.cache/dividend-tracker/data.db")).expanduser()
 
 #: Přísný formát tickera — alfanumerika + tečka a pomlčka (BRK.B, BRK-B).
 TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")
@@ -63,6 +73,7 @@ class Job:
     status: str = "running"  # running | done
     created_at: float = field(default_factory=time.time)
     results: List[Dict[str, Any]] = field(default_factory=list)
+    extra: Dict[str, Any] = field(default_factory=dict)  # doplňkové pole (např. summary sync jobu)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -71,6 +82,7 @@ class Job:
             "total": self.total,
             "done": len(self.results),
             "results": self.results,
+            **self.extra,
         }
 
 
@@ -89,6 +101,26 @@ class JobManager:
         for ticker in tickers:
             self._executor.submit(self._run_one, job, ticker, required_return_pct, use_benchmark)
         return job
+
+    def submit_sync(self, db: Database, tickers: List[str], force: bool) -> Job:
+        """Asynchronní cache-first synchronizace dat do DB (fundamenty + ceny)."""
+        job = Job(id=uuid.uuid4().hex[:12], total=len(tickers))
+        with self._lock:
+            self._jobs[job.id] = job
+        self._executor.submit(self._run_sync, job, db, tickers, force)
+        return job
+
+    def _run_sync(self, job: Job, db: Database, tickers: List[str], force: bool) -> None:
+        try:
+            summary = sync_all(db, tickers, force=force)
+            with self._lock:
+                job.extra["summary"] = summary
+                job.status = "done"
+        except Exception as exc:  # noqa: BLE001 — chyba nesmí zabít job
+            log.exception("sync job %s selhal", job.id)
+            with self._lock:
+                job.extra["error"] = f"Synchronizace selhala: {exc}"
+                job.status = "done"
 
     def get(self, job_id: str) -> Optional[Job]:
         with self._lock:
@@ -116,8 +148,9 @@ class WebApp(BaseHTTPRequestHandler):
     """HTTP handler — statické soubory + JSON API."""
 
     server_version = "DividendTracker/0.1"
-    # JobManager se injectuje v :func:`create_app` (třídová atributová reference).
+    # JobManager a Database se injectují v :func:`create_app` (třídová atributová reference).
     jobs: JobManager  # type: ignore[valid-type]
+    db: Database  # type: ignore[valid-type]
 
     # ------------------------------------------------------------------ util
 
@@ -153,6 +186,20 @@ class WebApp(BaseHTTPRequestHandler):
             if path.startswith("/api/jobs/"):
                 self._handle_job_get(path)
                 return
+            if path == "/api/watchlist":
+                self._handle_watchlist()
+                return
+            if path == "/api/fmp-status":
+                from ..data.fmp import FMPCacheClient
+
+                usage = FMPCacheClient(self.db).usage()
+                self._send_json(
+                    {
+                        "configured": bool(os.environ.get("FMP_API_KEY", "").strip()),
+                        **usage,
+                    }
+                )
+                return
             if path in ("/", "/index.html"):
                 self._send_file(STATIC_DIR / "index.html")
                 return
@@ -162,6 +209,11 @@ class WebApp(BaseHTTPRequestHandler):
             self._send_error_json(404, "Nenalezeno.")
         except (BrokenPipeError, ConnectionResetError):
             log.debug("klient ukončil spojení")
+
+    def _handle_watchlist(self) -> None:
+        """Srovnávací řádky přímo z lokální DB — žádné externí volání."""
+        rows = build_watchlist_rows(self.db)
+        self._send_json({"rows": rows, "count": len(rows)})
 
     def _handle_job_get(self, path: str) -> None:
         job_id = path.rsplit("/", 1)[-1]
@@ -184,6 +236,9 @@ class WebApp(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 — API http.server
         path = self.path.split("?", 1)[0]
+        if path == "/api/sync":
+            self._handle_sync()
+            return
         if path != "/api/analyze":
             self._send_error_json(404, "Nenalezeno.")
             return
@@ -219,6 +274,34 @@ class WebApp(BaseHTTPRequestHandler):
         log.info("job %s: analyzuji %s", job.id, ", ".join(tickers))
         self._send_json({"job_id": job.id}, status=202)
 
+    def _handle_sync(self) -> None:
+        """Cache-first synchronizace dat do lokální DB (asynchronní job)."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except (ValueError, UnicodeDecodeError):
+            self._send_error_json(400, "Neplatné JSON tělo.")
+            return
+
+        tickers_raw = payload.get("tickers") or []
+        if not isinstance(tickers_raw, list) or not tickers_raw:
+            self._send_error_json(400, "Pole 'tickers' musí být neprázdný seznam.")
+            return
+        tickers: List[str] = []
+        for item in tickers_raw[:MAX_TICKERS_PER_JOB]:
+            t = str(item).strip().upper()
+            if not TICKER_RE.match(t):
+                self._send_error_json(400, f"Neplatný ticker: {item!r}")
+                return
+            if t not in tickers:
+                tickers.append(t)
+
+        force = bool(payload.get("force", False))
+        job = self.jobs.submit_sync(self.db, tickers, force)
+        log.info("sync job %s: cache-first sync pro %s (force=%s)", job.id, ", ".join(tickers), force)
+        self._send_json({"job_id": job.id}, status=202)
+
     # ------------------------------------------------------------------ log
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 — API http.server
@@ -226,13 +309,18 @@ class WebApp(BaseHTTPRequestHandler):
 
 
 def create_app(
-    host: str = "127.0.0.1", port: int = 8742, job_manager: Optional[JobManager] = None
+    host: str = "127.0.0.1",
+    port: int = 8742,
+    job_manager: Optional[JobManager] = None,
+    db_path: Path | str | None = None,
 ) -> ThreadingHTTPServer:
-    """Vytvoří HTTP server s injektovaným :class:`JobManager`."""
+    """Vytvoří HTTP server s injektovaným :class:`JobManager` a lokální DB."""
     manager = job_manager or JobManager()
+    database = Database(db_path if db_path is not None else DEFAULT_DB_PATH)
 
     class _Handler(WebApp):
         jobs = manager  # type: ignore[assignment]
+        db = database  # type: ignore[assignment]
 
     return ThreadingHTTPServer((host, port), _Handler)
 
@@ -241,9 +329,11 @@ def main(host: str = "127.0.0.1", port: int = 8742) -> None:
     """Vstupní bod ``divtrack web`` — spustí server a čeká na Ctrl+C."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     manager = JobManager()
+    database = Database(DEFAULT_DB_PATH)
 
     class _Handler(WebApp):
         jobs = manager  # type: ignore[assignment]
+        db = database  # type: ignore[assignment]
 
     httpd = ThreadingHTTPServer((host, port), _Handler)
     print(f"Dividend Tracker web GUI běží na http://{host}:{port} (Ctrl+C pro ukončení)")
@@ -253,4 +343,5 @@ def main(host: str = "127.0.0.1", port: int = 8742) -> None:
         pass
     finally:
         manager._executor.shutdown(wait=False)  # noqa: SLF001 — úklid při výstupu
+        database.close()
         httpd.server_close()

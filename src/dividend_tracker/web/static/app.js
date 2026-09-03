@@ -18,11 +18,23 @@ const progressSub = $("#progress-sub");
 const tableSection = $("#table-section");
 const tableBody = $("#table-body");
 const tableCount = $("#table-count");
+const watchlistSection = $("#watchlist-section");
+const watchlistBody = $("#watchlist-body");
+const watchlistCount = $("#watchlist-count");
+const syncBtn = $("#sync-btn");
+const fmpBar = $("#fmp-bar");
+const fmpStatusText = $("#fmp-status-text");
+const refreshFmpBtn = $("#refresh-fmp-btn");
 
 let pollTimer = null;
 let sortKey = "score";      // výchozí řazení: nejlepší skóre nahoře
 let sortDir = -1;           // -1 = sestupně, 1 = vzestupně
 let currentRows = [];       // poslední vyrenderované řádky (pro přeseřazení bez fetche)
+
+/* watchlist (DB srovnání) — výchozí: abecedně vzestupně */
+let wlSortKey = "ticker";
+let wlSortDir = 1;
+let wlRows = [];
 
 /* ------------------------------ formátování ------------------------------ */
 
@@ -162,6 +174,174 @@ function renderTable(rows) {
     th.classList.remove("sorted-asc", "sorted-desc");
     if (th.dataset.key === sortKey) th.classList.add(sortDir === -1 ? "sorted-desc" : "sorted-asc");
   });
+}
+
+/* ------------------------------ watchlist (DB srovnání) ------------------------------ */
+
+/** Formátuje hodnotu buňky podle typu atributu. */
+function wlCell(key, row) {
+  const v = row[key];
+  switch (key) {
+    case "ticker": return `<span class="td-ticker">${escapeHtml(v)}</span>`;
+    case "name": return escapeHtml(v || "—");
+    case "sector": return escapeHtml(v || "—");
+    case "price": return fmtMoney(v, row.currency);
+    case "change": {
+      if (v == null) return "—";
+      const cls = v > 0 ? "val-good" : v < 0 ? "val-bad" : "";
+      const sign = v > 0 ? "+" : "";
+      return `<span class="${cls}">${sign}${Number(v).toFixed(2)}</span>`;
+    }
+    case "volume": return fmtInt(v);
+    case "dps_ttm": return fmtMoney(v, row.currency);
+    case "yield_pct": {
+      if (v == null) return "—";
+      const cls = v >= 5 ? "val-good" : v < 2.5 ? "val-warn" : "";
+      return `<span class="${cls}">${fmtPct(v)}</span>`;
+    }
+    case "growth_5y_pct": {
+      if (v == null) return "—";
+      const cls = v > 0 ? "val-good" : v < 0 ? "val-bad" : "";
+      const sign = v > 0 ? "+" : "";
+      return `<span class="${cls}">${sign}${fmtPct(v)}</span>`;
+    }
+    case "streak_years": {
+      if (v == null) return "—";
+      const cls = v >= 10 ? "val-good" : "";
+      return `<span class="${cls}">${v}</span>`;
+    }
+    case "next_ex_date": return escapeHtml(v || "—");
+    case "next_dividend": return fmtMoney(v, row.currency);
+    default: return v == null ? "—" : escapeHtml(String(v));
+  }
+}
+
+function renderWatchlist() {
+  const sorted = [...wlRows].sort((a, b) => {
+    let va = a[wlSortKey], vb = b[wlSortKey];
+    if (va == null && vb == null) return a.ticker.localeCompare(b.ticker);
+    if (va == null) return 1;   // chybějící hodnoty vždy dolů
+    if (vb == null) return -1;
+    if (typeof va === "string") return wlSortDir * va.localeCompare(vb, "cs");
+    return wlSortDir * (va - vb);
+  });
+
+  watchlistBody.innerHTML = sorted.map((row) => {
+    const cells = ["ticker", "name", "sector", "price", "change", "volume", "dps_ttm",
+      "yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend"]
+      .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|growth_5y_pct|streak_years|next_dividend)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
+      .join("");
+    return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
+  }).join("");
+
+  watchlistCount.textContent = `${wlRows.length} ticker(ů) v databáze`;
+
+  // indikátor aktuálního řazení
+  document.querySelectorAll("#watchlist-table thead th").forEach((th) => {
+    th.classList.remove("sorted-asc", "sorted-desc");
+    if (th.dataset.key === wlSortKey) th.classList.add(wlSortDir === -1 ? "sorted-desc" : "sorted-asc");
+  });
+}
+
+async function loadWatchlist() {
+  try {
+    const res = await fetch("/api/watchlist");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    wlRows = data.rows || [];
+    if (wlRows.length) {
+      watchlistSection.classList.remove("hidden");
+      renderWatchlist();
+      emptyState.classList.add("hidden");
+    } else {
+      watchlistSection.classList.add("hidden");
+      emptyState.classList.remove("hidden");
+    }
+  } catch {
+    /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+/* ------------------------------ FMP status ------------------------------ */
+
+async function loadFmpStatus() {
+  try {
+    const res = await fetch("/api/fmp-status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const s = await res.json();
+    fmpBar.classList.remove("hidden");
+    if (!s.configured) {
+      fmpStatusText.textContent = "FMP: API klíč nenastaven (proměnná FMP_API_KEY) — fundamenty se stahují přes yfinance fallback.";
+      return;
+    }
+    const limit = s.daily_limit ?? 250;
+    const used = s.calls_used ?? 0;
+    const remaining = Math.max(0, (s.remaining != null ? s.remaining : limit - used));
+    fmpStatusText.textContent = `FMP: ${used}/${limit} volání dnes · zbývá ${remaining}` +
+      (remaining <= 25 ? " ⚠️ limit se blíží — fundamenty se už netaží, čtu z DB" : "");
+  } catch {
+    fmpBar.classList.add("hidden");
+  }
+}
+
+/* ------------------------------ synchronizace dat ------------------------------ */
+
+async function startSync(tickers) {
+  setBusy(true);
+  progressEl.classList.remove("hidden");
+  progressTitle.textContent = `Synchronizuji data pro ${tickers.length} ticker(ů)…`;
+  progressSub.textContent = "Cache-first: čerstvá data z lokální DB, stará se stahují (FMP limit 250/den).";
+
+  try {
+    const res = await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tickers }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    const { job_id } = await res.json();
+    pollSyncJob(job_id, tickers.length);
+  } catch (err) {
+    showError(`Synchronizaci se nepodařilo spustit: ${err.message}`);
+  }
+}
+
+function pollSyncJob(jobId, total) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const job = await res.json();
+
+      progressTitle.textContent = `Synchronizuji… (${job.done}/${total})`;
+
+      if (job.status === "done") {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        progressEl.classList.add("hidden");
+        setBusy(false);
+        const entry = job.results[0] || {};
+        if (entry.error) {
+          showError(entry.error);
+          return;
+        }
+        const s = entry.summary || {};
+        const c = s.counts || {};
+        const q = s.quotes || {};
+        alert(
+          `Synchronizace hotová:\n` +
+          `• z cache: ${c.cached ?? 0}\n` +
+          `• FMP: ${c.fmp ?? 0} · yfinance fallback: ${c.yfinance ?? 0}\n` +
+          `• stará data ponechána: ${c.stale_cache ?? 0} · chyby: ${c.error ?? 0}\n` +
+          `• ceny aktualizovány: ${q.updated ?? 0}/${total}`
+        );
+        await Promise.all([loadWatchlist(), loadFmpStatus()]);
+      }
+    } catch {
+      /* dočasná chyba sítě — zkusit znovu při dalším ticku */
+    }
+  }, 2000);
 }
 
 /* ------------------------------ renderování karet ------------------------------ */
@@ -411,7 +591,24 @@ form.addEventListener("submit", (e) => {
   startAnalysis(tickers.slice(0, 100));
 });
 
-// Seřazení kliknutím na záhlaví sloupce.
+// Synchronizace dat do lokální DB (cache-first).
+syncBtn.addEventListener("click", () => {
+  const tickers = [...new Set(input.value.split(/[\s,]+/).map((t) => t.trim().toUpperCase()).filter(Boolean))];
+  if (!tickers.length) return;
+  startSync(tickers.slice(0, 100));
+});
+
+// Seřazení watchlisty kliknutím na záhlaví (vzestupně/sestupně podle libovolného atributu).
+document.querySelectorAll("#watchlist-table thead th.sortable").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (wlSortKey === key) wlSortDir *= -1;
+    else { wlSortKey = key; wlSortDir = typeof wlRows[0]?.[key] === "string" ? 1 : -1; }
+    renderWatchlist();
+  });
+});
+
+// Seřazení srovnávací tabulky analýzy.
 document.querySelectorAll("#compare-table thead th.sortable").forEach((th) => {
   th.addEventListener("click", () => {
     const key = th.dataset.key;
@@ -432,4 +629,9 @@ tableBody.addEventListener("click", (e) => {
   setTimeout(() => { card.style.outline = ""; }, 1600);
 });
 
+refreshFmpBtn.addEventListener("click", loadFmpStatus);
+
+// Start: načíst watchlist z DB + stav FMP limitu.
+loadWatchlist();
+loadFmpStatus();
 input.focus();

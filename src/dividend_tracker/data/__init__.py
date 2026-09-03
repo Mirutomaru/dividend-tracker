@@ -1,5 +1,39 @@
-"""Datová vrstva — sběr dat z providera (yfinance), cache, odvětvové benchmarky."""
+"""Datová vrstva — sběr dat z providerů, cache-first SQLite úložiště, synchronizace.
 
+- :mod:`fetcher`  — yfinance snapshoty (původní analytická cesta)
+- :mod:`db`       — lokální SQLite databáze (stocks, dividends_history, calendar, quotes, api_usage)
+- :mod:`fmp`      — FMP klient s denním čítačem volání (limit 250/den)
+- :mod:`quotes`   — aktuální ceny z odděleného zdroje (yfinance batch) → tabulka ``quotes``
+- :mod:`sync`     — cache-first orchestrace (TTL 72 h fundamenty / 7 dní dividendy, fallback yfinance)
+"""
+
+from .db import Database
 from .fetcher import DataFetchError, build_snapshot, get_sector_benchmark
+from .fmp import DAILY_LIMIT, FMPCacheClient, FMPError, FMPLimitExceeded, get_api_key
+from .quotes import fetch_quotes, sync_quotes
+from .sync import (
+    DIVIDEND_TTL,
+    FUNDAMENTAL_TTL,
+    sync_all,
+    sync_fundamentals,
+)
+from .watchlist import build_watchlist_rows
 
-__all__ = ["DataFetchError", "build_snapshot", "get_sector_benchmark"]
+__all__ = [
+    "DataFetchError",
+    "Database",
+    "DAILY_LIMIT",
+    "DIVIDEND_TTL",
+    "FMPCacheClient",
+    "FMPError",
+    "FMPLimitExceeded",
+    "FUNDAMENTAL_TTL",
+    "build_snapshot",
+    "build_watchlist_rows",
+    "fetch_quotes",
+    "get_api_key",
+    "get_sector_benchmark",
+    "sync_all",
+    "sync_fundamentals",
+    "sync_quotes",
+]

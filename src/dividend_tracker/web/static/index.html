@@ -19,17 +19,51 @@
           id="ticker-input" type="text" placeholder="Např. KO JNJ MSFT O (mezerní oddělené)"
           spellcheck="false" aria-label="Tickery k analýze" />
         <button id="analyze-btn" type="submit">Analyzovat</button>
+        <button id="sync-btn" type="button" title="Cache-first synchronizace dat do lokální databáze (fundamenty + ceny)">Synchronizovat data</button>
       </form>
     </div>
   </header>
 
   <main class="content">
-    <section id="empty-state" class="empty-state">
-      <div class="empty-icon">📊</div>
-      <h2>Zadejte tickery a spusťte analýzu</h2>
-      <p>Dividendový výnos, udržitelnost, skóre zdraví 0–100 a férová cena — vše na jednom místě.</p>
+    <!-- FMP limit status -->
+    <section id="fmp-bar" class="card fmp-bar hidden">
+      <span id="fmp-status-text"></span>
+      <button id="refresh-fmp-btn" type="button" class="mini-btn">Obnovit</button>
     </section>
 
+    <!-- Watchlist — srovnání přímo z lokální databáze -->
+    <section id="watchlist-section" class="hidden">
+      <div class="card table-card">
+        <div class="table-head-bar">
+          <h2>Srovnání watchlisty</h2>
+          <span id="watchlist-count" class="table-count"></span>
+        </div>
+        <p class="table-hint">Data z lokální databáze (cache-first) · klik na záhlaví = seřazení vzestupně/sestupně podle libovolného atributu</p>
+        <div class="table-scroll">
+          <table id="watchlist-table">
+            <thead>
+              <tr>
+                <th data-key="ticker" class="sortable">Ticker</th>
+                <th data-key="name" class="sortable">Název</th>
+                <th data-key="sector" class="sortable">Sektor</th>
+                <th data-key="price" class="sortable num">Cena</th>
+                <th data-key="change" class="sortable num">Změna</th>
+                <th data-key="volume" class="sortable num">Objem</th>
+                <th data-key="dps_ttm" class="sortable num">DPS TTM</th>
+                <th data-key="yield_pct" class="sortable num">Yield %</th>
+                <th data-key="growth_5y_pct" class="sortable num">Růst 5l %</th>
+                <th data-key="streak_years" class="sortable num">Série l.</th>
+                <th data-key="next_ex_date" class="sortable">Příští ex-date</th>
+                <th data-key="next_dividend" class="sortable num">Příští div.</th>
+              </tr>
+            </thead>
+            <tbody id="watchlist-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Progress (analýza i sync) -->
     <section id="progress" class="hidden">
       <div class="card progress-card">
         <div class="spinner"></div>
@@ -40,6 +74,7 @@
       </div>
     </section>
 
+    <!-- Srovnávací tabulka analýzy (nákupní zóny) -->
     <section id="table-section" class="hidden">
       <div class="card table-card">
         <div class="table-head-bar">
@@ -69,11 +104,19 @@
       </div>
     </section>
 
+    <!-- Detailní karty -->
     <section id="results" class="results"></section>
+
+    <!-- Prázdný stav (jen když je DB prázdná) -->
+    <section id="empty-state" class="empty-state hidden">
+      <div class="empty-icon">📊</div>
+      <h2>Databáze je zatím prázdná</h2>
+      <p>Zadejte tickery a klikněte na „Synchronizovat data“ — fundamenty i ceny se uloží do lokální databáze (cache-first, FMP limit 250 volání/den). Poté můžete spustit plnou analýzu.</p>
+    </section>
   </main>
 
   <footer class="footer">
-    Data: Yahoo Finance · Analýza běží lokálně · Není investiční doporučení
+    Data: Yahoo Finance + Financial Modeling Prep · cache-first lokální databáze · Není investiční doporučení
   </footer>
 
   <script src="/static/app.js"></script>

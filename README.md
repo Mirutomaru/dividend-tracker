@@ -43,9 +43,14 @@ src/dividend_tracker/
 │   ├── metrics.py          # výpočet všech metrik A/B/C
 │   ├── scoring.py          # skóre 0–100, safety flag, signály
 │   └── valuation.py        # Gordon + výnosová metoda, nákupní zóna
-├── data/                   # adapter na yfinance (jediné místo kontaktu se světem)
-│   ├── fetcher.py          # Snapshot sběr, retry, cache, benchmarky sektoru
-│   └── peers.py            # peer universe pro odvětvové mediány P/E a EV/EBITDA
+├── data/                   # sběr dat + cache-first lokální databáze
+│   ├── fetcher.py          # Snapshot sběr (yfinance), retry, cache, benchmarky sektoru
+│   ├── peers.py            # peer universe pro odvětvové mediány P/E a EV/EBITDA
+│   ├── db.py               # SQLite: stocks, dividends_history, dividends_calendar, quotes, api_usage
+│   ├── fmp.py              # FMP klient — denní limit 250 volání s čítačem v DB (api_usage)
+│   ├── quotes.py           # aktuální ceny přes yfinance → tabulka quotes (NE FMP!)
+│   ├── sync.py             # cache-first synchronizace: TTL 72 h fundamenty / 7 dní dividendy
+│   └── watchlist.py        # srovnávací řádky počítané přímo z DB (bez externích volání)
 ├── pipeline.py             # analyze_ticker() — jediný vstupní bod (CLI i GUI)
 ├── presentation/           # report schéma, konzolový formát
 │   ├── report.py           # normalizované JSON + export
@@ -111,6 +116,37 @@ závislostí — běží na standardní knihovně Pythonu. Zadejte tickery oddě
 - Analýza běží asynchronně v pozadí (thread pool), UI se nezavěšuje.
 - Podpora automatického tmavého režimu (`prefers-color-scheme`).
 - Server je vázaný na `127.0.0.1` — určen pro lokální použití.
+
+## Datová vrstva — cache-first lokální databáze
+
+Web GUI umí pracovat i **přímo z lokální SQLite databáze** (`~/.cache/dividend-tracker/data.db`,
+přesahuje restarty) bez jakéhokoli externího volání:
+
+- **Watchlist tabulka** — srovnání všech tickerů v DB, výchozí řazení **abecedně**,
+  klik na záhlaví libovolného sloupce přepíná vzestup/sestup (cena, yield, payout,
+  růst 5l, série let, příští výplata…). Metriky se počítají z uložených dat.
+- **Synchronizace** (tlačítko „⟳ Sync“ nebo `POST /api/sync`):
+  - *Cache-first*: fundamenty se stahují jen při chybě v DB nebo starší než **72 h**,
+    dividendová historie starší než **7 dní**; čerstvá data = žádné API volání.
+  - *FMP* (fundamenty + dividendy, dávka 1–3 volání na ticker) s denním limitem
+    **250 volání** — čítač a expirace se evidují v tabulce `api_usage`; při vyčerpání
+    limitu se fundamenty přestávají tahat a čte se jen z DB.
+  - *Ceny* nikdy neprocházejí FMP: aktuální ceny jde **yfinance** (bez tvrdého
+    denního limitu) do tabulky `quotes`.
+- **API**: `GET /api/watchlist` · `POST /api/sync {tickers, force}` ·
+  `GET /api/fmp-status` (zbývající volání dnes).
+
+### Konfigurace FMP
+
+```bash
+export FMP_API_KEY="..."        # bez klíče běží sync jen přes yfinance fallback
+# volitelné: DIVTRACK_DB=/cesta/k/data.db   (výchozí ~/.cache/dividend-tracker/data.db)
+```
+
+Datové schéma (minimální, dle zadání): `stocks` (ticker, name, currency, exchange,
+last_fundamental_update), `dividends_history` (ex_date, payment_date, record_date,
+amount, frequency), `dividends_calendar`, `quotes` (price, change, volume, timestamp)
+a `api_usage` (denní čítač volání per provider).
 
 ## JSON schéma reportu (výběr)
 
