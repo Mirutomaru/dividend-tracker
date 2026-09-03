@@ -416,12 +416,15 @@ def test_export_watchlist_csv_endpoint(seeded_server):
     conn = http.client.HTTPConnection(*seeded_server.split("//")[1].split(":"), timeout=5)
     conn.request("GET", "/api/export/watchlist.csv")
     resp = conn.getresponse()
-    raw = resp.read().decode("utf-8-sig")
+    raw_bytes = resp.read()
     ctype = resp.getheader("Content-Type", "")
     disp = resp.getheader("Content-Disposition", "")
     conn.close()
     assert resp.status == 200
     assert "text/csv" in ctype and 'filename="watchlist.csv"' in disp
+    # BOM (utf-8-sig) — soubor se musí správně otevřít v Excelu jako file export
+    assert raw_bytes.startswith(b"\xef\xbb\xbf")
+    raw = raw_bytes.decode("utf-8-sig")
     lines = [ln for ln in raw.splitlines() if ln]
     assert lines[0].startswith("ticker,name,currency")
     # 2 tickery v DB → 2 data řádky + hlavička
@@ -451,16 +454,39 @@ def test_export_analysis_csv_flow(monkeypatch, server):
     conn = http.client.HTTPConnection(*server.split("//")[1].split(":"), timeout=5)
     conn.request("GET", f"/api/export/analysis/{job_id}.csv")
     resp = conn.getresponse()
-    raw = resp.read().decode("utf-8-sig")
+    raw_bytes = resp.read()
     ctype = resp.getheader("Content-Type", "")
     disp = resp.getheader("Content-Disposition", "")
     conn.close()
     assert resp.status == 200 and "text/csv" in ctype
     assert f'filename="analysis_{job_id}.csv"' in disp
+    # BOM (utf-8-sig) — konzistence se souborovým exportem pro Excel
+    assert raw_bytes.startswith(b"\xef\xbb\xbf")
+    raw = raw_bytes.decode("utf-8-sig")
     lines = [ln for ln in raw.splitlines() if ln]
     assert lines[0].startswith("ticker,name,sector")
     # jeden report → ticker KO + férová cena 12
     assert "KO" in lines[1] and "Firma KO" in lines[1]
+
+
+def test_export_analysis_no_reports_404(monkeypatch, server):
+    """Job kde selhaly VŠECHNY tickery (jen error položky) → 404, ne prázdný CSV."""
+    from dividend_tracker import web as web_pkg
+
+    def fake_analyze(ticker, required_return_pct=8.0, use_benchmark=True):
+        raise DataFetchError(f"žádná data pro {ticker}")
+
+    monkeypatch.setattr(web_pkg.server, "analyze_ticker", fake_analyze)
+
+    status, body = _request(server, "POST", "/api/analyze", {"tickers": ["XYZ"]})
+    assert status == 202
+    job_id = body["job_id"]
+    job = _wait_job(server, job_id)
+    # job je hotový, ale obsahuje jen error položku (žádný report)
+    assert job["status"] == "done" and all("error" in e for e in job["results"])
+
+    status, body = _request(server, "GET", f"/api/export/analysis/{job_id}.csv")
+    assert status == 404 and "error" in body
 
 
 def test_export_analysis_unknown_job_404(server):

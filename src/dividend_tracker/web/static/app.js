@@ -781,7 +781,9 @@ function pollJob(jobId, total) {
       if (job.results.length) {
         tableSection.classList.remove("hidden");
         renderTable(job.results.map(rowFromEntry));
-        setAnalysisExport(jobId); // CSV export dostupný, jakmile je aspoň 1 report
+        // CSV export jen když je aspoň 1 hotový report (error položky se neexportují — server by vrátil 404).
+        const hasReport = job.results.some((e) => e && "report" in e);
+        if (hasReport) setAnalysisExport(jobId);
       }
 
       progressTitle.textContent = `Analyzuji… (${job.done}/${total})`;

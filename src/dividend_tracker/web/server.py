@@ -254,7 +254,8 @@ class WebApp(BaseHTTPRequestHandler):
         from ..presentation.csv_export import watchlist_csv_text
 
         rows = build_watchlist_rows(self.db)
-        body = watchlist_csv_text(rows).encode("utf-8")
+        # utf-8-sig = BOM, aby se soubor správně otevřel v Excelu (jako file export)
+        body = watchlist_csv_text(rows).encode("utf-8-sig")
         self._send_csv(body, "watchlist.csv")
 
     def _handle_export_analysis_csv(self, job_id: str) -> None:
@@ -269,7 +270,7 @@ class WebApp(BaseHTTPRequestHandler):
         if not reports:
             self._send_error_json(404, "Job nemá žádné hotové reporty k exportu.")
             return
-        body = analysis_csv_text(reports).encode("utf-8")
+        body = analysis_csv_text(reports).encode("utf-8-sig")  # BOM pro Excel
         safe_id = "".join(c for c in job_id if c.isalnum() or c in "-_")[:32]
         self._send_csv(body, f"analysis_{safe_id}.csv")
 
