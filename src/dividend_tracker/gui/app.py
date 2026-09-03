@@ -181,6 +181,9 @@ class DividendTrackerApp:
             except DataFetchError as exc:
                 log.warning("fetch %s selhal: %s", tk_, exc)
                 self.q.put(("error", (tk_, str(exc))))
+            except Exception as exc:  # noqa: BLE001 — neočekávaná chyba nesmí zabít vlákno (UI by zamrzlo na _busy=True)
+                log.exception("neočekánaná chyba při analýze %s", tk_)
+                self.q.put(("error", (tk_, f"Neočekánaná chyba: {exc}")))
         self.q.put(("done", None))
 
     def _poll_queue(self) -> None:

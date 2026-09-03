@@ -12,6 +12,8 @@ from .pipeline import analyze_ticker
 from .presentation.console import format_summary_table, format_ticker_block
 from .presentation.report import export_json
 
+log = logging.getLogger(__name__)
+
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
@@ -66,6 +68,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         except DataFetchError as exc:
             n_errors += 1
             print(f"  ✗ Nedostupná data: {exc}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 — neočekánaná chyba nesmí zastavit zbývající tickery
+            log.exception("neočekánaná chyba při analýze %s", tk)
+            n_errors += 1
+            print(f"  ✗ Neočekánaná chyba: {exc}", file=sys.stderr)
 
     if reports:
         print()

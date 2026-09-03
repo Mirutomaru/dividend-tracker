@@ -7,6 +7,7 @@ from typing import Optional
 
 from ..models import MetricsReport, Snapshot
 from .dividends import cagr, dividend_streak, full_years
+from .sectors import is_reit
 
 
 def _safe_div(a: Optional[float], b: Optional[float]) -> Optional[float]:
@@ -28,7 +29,11 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
         fwd = snap.forward_dividend_rate if (snap.forward_dividend_rate or 0) > 0 else dps_ttm
         m.yield_forward_pct = round(fwd / snap.price * 100.0, 3)
 
-    if snap.eps_ttm and snap.eps_ttm > 0:
+    reit = is_reit(snap.sector)
+
+    if reit:
+        m.notes.append("REIT: klasický EPS payout ratio ignorován (NI zkreslené D&A nemovitostí) — udržitelnost posuzuje FFO/AFFO payout.")
+    elif snap.eps_ttm and snap.eps_ttm > 0:
         m.payout_eps_pct = round(dps_ttm / snap.eps_ttm * 100.0, 2)
     else:
         m.notes.append("Payout ratio (EPS): EPS_TTM k dispozici není nebo ≤ 0.")
@@ -39,6 +44,26 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
         m.notes.append("FCF payout ratio nepočítatelný — FCF ≤ 0 (klíčový signál rizika).")
     else:
         m.notes.append("FCF payout ratio chybí — data dividends_paid nebo FCF nejsou k dispozici.")
+
+    # REIT: FFO ≈ NI + D&A; AFFO ≈ FFO − CapEx (odhad bez rozlišení maintenance/growth capex)
+    if reit:
+        ffo = None
+        if snap.net_income is not None and snap.depreciation_amortization is not None:
+            ffo = snap.net_income + snap.depreciation_amortization
+        affo = (ffo - snap.capex) if (ffo is not None and snap.capex is not None) else None
+
+        if ffo is not None and ffo > 0 and snap.dividends_paid is not None:
+            m.ffo_payout_pct = round(snap.dividends_paid / ffo * 100.0, 2)
+        elif ffo is not None and ffo <= 0:
+            m.notes.append("FFO ≤ 0 — dividendy nejsou pokryty FFO (výrazné riziko škrtení).")
+        else:
+            m.notes.append("FFO payout chybí — není k dispozici NI nebo D&A.")
+
+        if affo is not None and affo > 0 and snap.dividends_paid is not None:
+            m.affo_payout_pct = round(snap.dividends_paid / affo * 100.0, 2)
+            m.notes.append("AFFO odhadnuto jako FFO − CapEx (bez rozlišení maintenance/growth capex).")
+        elif affo is not None and affo <= 0:
+            m.notes.append("Odhad AFFO ≤ 0 — dividendy přesahují hotovostní kapacitu po investicích.")
 
     fy = full_years(snap.annual_dps, snap.dividend_payment_counts)
     if fy != {int(k): v for k, v in snap.annual_dps.items()}:

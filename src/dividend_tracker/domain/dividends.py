@@ -6,6 +6,55 @@ import pandas as pd
 from typing import Dict, Optional, Tuple
 
 
+def split_adjust_dividends(
+    divs: Optional[pd.Series],
+    splits: Optional["pd.Series | pd.DataFrame"] = None,
+) -> pd.Series:
+    """Upraví surovou historii dividend o akciové splity (srovnatelný DPS na aktuální počet akcií).
+
+    yfinance vrací dividendy tak, jak byly vyplaceny — po pozdějším 4:1 splitu jsou
+    historické per-share hodnoty na starém počtu akcií. Pro CAGR i srovnání yieldu
+    s aktuální cenou se každá minulá platba škáluje na AKTUÁLNÍ počet akcií:
+    vynásobí se součinem ``1/faktor`` všech splitů, které proběhly PO dané výplatě.
+
+    Konvence faktoru (yfinance ``splits``, ověřeno ve zdrojovém kódu 1.x):
+    4:1 forward split = 4.0, reverse split < 1. Neplatné hodnoty (NaN, <= 0) se ignorují.
+    """
+    if divs is None or len(divs) == 0:
+        return pd.Series(dtype=float) if divs is None else divs.copy()
+
+    out = divs.astype(float).copy()
+
+    # Normalizace splits na (datum, faktor) — Series i DataFrame se sloupcem "Stock Splits"
+    pairs: list[tuple] = []
+    if splits is not None and len(splits):
+        s = splits
+        if isinstance(s, pd.DataFrame):
+            col = "Stock Splits" if "Stock Splits" in s.columns else s.columns[0]
+            s = s[col]
+        for ts, f in s.items():
+            try:
+                fv = float(f)
+            except (TypeError, ValueError):
+                continue
+            if fv != fv or fv <= 0.0:  # NaN nebo neplatný faktor
+                continue
+            pairs.append((ts, fv))
+
+    for i, ts in enumerate(out.index):
+        prod = 1.0
+        for split_ts, factor in pairs:
+            try:
+                after = split_ts > ts
+            except TypeError:  # nesrovnatelné typy indexů — raději ignorovat než crashnout
+                continue
+            if after:
+                prod /= factor
+        out.iloc[i] = out.iloc[i] * prod
+
+    return out
+
+
 def aggregate_dividends(series: "pd.Series | None") -> Tuple[Dict[int, float], Dict[int, int], Optional[float]]:
     """Zahrubí surovou sérii plateb dividend (DatetimeIndex, hodnota = DPS za jednu výplatu).
 

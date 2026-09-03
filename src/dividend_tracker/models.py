@@ -52,6 +52,8 @@ class Snapshot(BaseModel):
     equity: Optional[float] = None
     fcf_ttm: Optional[float] = None  # volný hotovostní tok (roční, nejnovější k dispozici)
     dividends_paid: Optional[float] = None  # reálně vyplacené dividendy z CF výkazu
+    depreciation_amortization: Optional[float] = None  # D&A z CF výkazu (pro FFO/AFFO u REIT)
+    capex: Optional[float] = None  # kapitálové výdaje, kladná velikost |CapEx| (AFFO odhad)
 
     # Násobky hlášené direktně providerem (fallback / cross-check)
     pe_ttm_reported: Optional[float] = None
@@ -77,8 +79,10 @@ class MetricsReport(BaseModel):
     # A. Dividendové metriky & udržitelnost
     yield_trailing_pct: Optional[float] = None
     yield_forward_pct: Optional[float] = None
-    payout_eps_pct: Optional[float] = None        # DPS_TTM / EPS_TTM
+    payout_eps_pct: Optional[float] = None        # DPS_TTM / EPS_TTM (u REIT ignorováno)
     fcf_payout_pct: Optional[float] = None        # Dividends Paid / FCF
+    ffo_payout_pct: Optional[float] = None        # REIT: Dividends Paid / FFO (FFO ≈ NI + D&A)
+    affo_payout_pct: Optional[float] = None       # REIT: Dividends Paid / AFFO (AFFO ≈ FFO − CapEx, odhad)
     cagr_3y_pct: Optional[float] = None
     cagr_5y_pct: Optional[float] = None
     cagr_10y_pct: Optional[float] = None
@@ -120,12 +124,17 @@ class ScoreResult(BaseModel):
     reasons: List[str] = Field(default_factory=list)
 
 
+DdmModel = Literal["gordon", "two_stage"]
+
+
 class FairValueResult(BaseModel):
     """Férová cena a doporučená nákupní zóna."""
 
     required_return_pct: float = 8.0
     growth_assumed_pct: Optional[float] = None
-    gordon_price: Optional[float] = None
+    ddm_model: DdmModel = "gordon"   # použitý dividendový diskontní model
+    gordon_price: Optional[float] = None       # single-stage (P = D1/(r−g))
+    two_stage_price: Optional[float] = None    # two-stage DDM (vysoký krátkodobý růst, g > r)
     yield_based_price: Optional[float] = None
     fair_value: Optional[float] = None
     buy_zone_low: Optional[float] = None   # konzervativní kraj (15 % marže bezpečí pod FV)

@@ -58,6 +58,8 @@ def build_report(
                 "dps_ttm": snap.dps_ttm,
                 "payout_ratio_eps_pct": metrics.payout_eps_pct,
                 "fcf_payout_ratio_pct": metrics.fcf_payout_pct,
+                "ffo_payout_ratio_pct": metrics.ffo_payout_pct,      # REIT: Dividends Paid / FFO
+                "affo_payout_ratio_pct": metrics.affo_payout_pct,    # REIT: Dividends Paid / AFFO (odhad)
                 "growth_cagr_3y_pct": metrics.cagr_3y_pct,
                 "growth_cagr_5y_pct": metrics.cagr_5y_pct,
                 "growth_cagr_10y_pct": metrics.cagr_10y_pct,

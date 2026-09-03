@@ -11,12 +11,10 @@ import statistics
 from typing import List, Optional, Tuple
 
 from ..models import Benchmark, MetricsReport, ScoreBreakdown, ScoreResult, Snapshot
-
-# REIT a utility mají odlišné payout pravidlo (spec: FCF payout > 85 % se jim nepočítá)
-REIT_LIKE_SECTORS = {"Real Estate", "Utilities"}
+from .sectors import is_reit, is_reit_like
 
 SIGNAL_BUY_ZONE = "BUY_ZONE_UNDERVALUED"   # yield > 15 % nad 5Y průměrem + zelený safety flag
-SIGNAL_DIVIDEND_TRAP = "DIVIDEND_TRAP"     # yield > 8 % a FCF payout > 100 % (nebo záporné FCF)
+SIGNAL_DIVIDEND_TRAP = "DIVIDEND_TRAP"     # yield > 8 % a FCF/FFO/AFFO payout > 100 % (nebo záporné FCF)
 SIGNAL_NO_DIVIDEND = "NO_DIVIDENDS"
 
 BLOCK_WEIGHTS = {"sustainability": 40, "valuation": 35, "quality_growth": 25}
@@ -24,6 +22,12 @@ BLOCK_WEIGHTS = {"sustainability": 40, "valuation": 35, "quality_growth": 25}
 
 def _clip01(x: Optional[float]) -> Optional[float]:
     return None if x is None else max(0.0, min(1.0, float(x)))
+
+
+def _reit_cash_coverage(m: MetricsReport) -> Optional[float]:
+    """Nejkonzervativnější (nejvyšší) dostupný FFO/AFFO payout ratio pro REIT safety logiku."""
+    vals = [v for v in (m.ffo_payout_pct, m.affo_payout_pct) if v is not None]
+    return max(vals) if vals else None
 
 
 def _lower_is_better(value: Optional[float], best: float, worst: float) -> Optional[float]:
@@ -54,15 +58,51 @@ def _block_score(items: List[Tuple[str, float, Optional[float]]]) -> Optional[fl
 
 
 def compute_safety_flag(snap: Snapshot, m: MetricsReport) -> Tuple[Optional[str], List[str]]:
-    """Dividend Safety Flag dle specifikace (zelená/žlutá/červená)."""
+    """Dividend Safety Flag dle specifikace (zelená/žlutá/červená).
+
+    REITY se posuzují jinak: EPS payout je ignorován a hotovostní krytí dividend
+    měří FFO/AFFO payout ratio (payout > 100 % = červená, < 75 % = součást zelené).
+    """
     reasons: List[str] = []
     red = False
 
+    if is_reit(snap.sector):
+        cov = _reit_cash_coverage(m)
+        # Záporné FCF se trestá jen tehdy, když není k dispozici lepší REIT metrika (FFO/AFFO).
+        if snap.fcf_ttm is not None and snap.fcf_ttm < 0 and cov is None:
+            red = True
+            reasons.append("Záporné FCF a FFO/AFFO data chybí — krytí dividendy neprokázáno.")
+        if cov is not None and cov > 100.0:
+            red = True
+            label = "AFFO" if m.affo_payout_pct is not None else "FFO"
+            reasons.append(f"{label} payout ratio {cov:.1f} % > 100 % — dividendy překračují hotovostní krytí.")
+        if m.net_debt_to_ebitda is not None and m.net_debt_to_ebitda > 4.5:
+            red = True
+            reasons.append(f"Net Debt/EBITDA {m.net_debt_to_ebitda:.2f}x > 4.5x.")
+
+        if red:
+            return "red", reasons
+
+        green_ok = (
+            cov is not None
+            and cov < 75.0
+            and m.net_debt_to_ebitda is not None
+            and m.net_debt_to_ebitda < 3.0
+            and m.interest_coverage is not None
+            and m.interest_coverage > 4.0
+        )
+        if green_ok:
+            return "green", [f"FFO/AFFO payout {cov:.1f} % < 75 %; Net Debt/EBITDA < 3.0x; Interest Coverage > 4.0x."]
+
+        reasons.append("Nejsou splněna všechna kritéria zeleného stavu (nebo chybí FFO/AFFO data).")
+        return "yellow", reasons
+
+    # ---- klasické firmy -----------------------------------------------------------
     if snap.fcf_ttm is not None and snap.fcf_ttm < 0:
         red, reasons = True, ["Záporné FCF — výplata není hotovostně kryta."]
     payout_ok = m.payout_eps_pct is not None and m.payout_eps_pct < 65.0
     fcf_p = m.fcf_payout_pct
-    if fcf_p is not None and fcf_p > 85.0 and (snap.sector or "") not in REIT_LIKE_SECTORS:
+    if fcf_p is not None and fcf_p > 85.0 and not is_reit_like(snap.sector):
         red = True
         reasons.append(f"FCF payout ratio {fcf_p:.1f} % > 85 %.")
     elif snap.fcf_ttm is not None and snap.fcf_ttm <= 0 and (snap.dividends_paid or 0) > 0:
@@ -92,10 +132,16 @@ def compute_safety_flag(snap: Snapshot, m: MetricsReport) -> Tuple[Optional[str]
 
 def _detect_signals(snap: Snapshot, m: MetricsReport, safety: Optional[str]) -> List[str]:
     signals: List[str] = []
-    trap_fcf_breach = (snap.fcf_ttm is not None and snap.fcf_ttm < 0) or bool(
-        m.fcf_payout_pct is not None and m.fcf_payout_pct > 100.0
-    )
-    if (m.yield_trailing_pct or 0) > 8.0 and trap_fcf_breach:
+    if is_reit(snap.sector):
+        cov = _reit_cash_coverage(m)
+        trap_breach = (cov is not None and cov > 100.0) or (
+            snap.fcf_ttm is not None and snap.fcf_ttm < 0 and cov is None
+        )
+    else:
+        trap_breach = (snap.fcf_ttm is not None and snap.fcf_ttm < 0) or bool(
+            m.fcf_payout_pct is not None and m.fcf_payout_pct > 100.0
+        )
+    if (m.yield_trailing_pct or 0) > 8.0 and trap_breach:
         signals.append(SIGNAL_DIVIDEND_TRAP)
     if safety == "green" and (m.yield_vs_5y_deviation_pct or -999.0) > 15.0:
         signals.append(SIGNAL_BUY_ZONE)
@@ -116,19 +162,30 @@ def compute_score(
     cagr5 = m.cagr_5y_pct or 0.0
     growth_streak_pts = min(max(cagr5, 0.0) / 5.0, 1.0) * 3.0 + min(m.streak_years / 10.0, 1.0) * 3.0
 
+    reit = is_reit(snap.sector)
     fcf_payout_score: Optional[float]
     if snap.fcf_ttm is not None and snap.fcf_ttm <= 0:
         fcf_payout_score = 0.0  # záporné FCF se trestá, nezapočítává se jako "chybí"
     else:
         fcf_payout_score = _lower_is_better(m.fcf_payout_pct, 70.0, 110.0)
 
-    sustainability = [
-        ("payout_eps", 10, _lower_is_better(m.payout_eps_pct, 65.0, 90.0)),
-        ("fcf_payout", 10, fcf_payout_score),
-        ("net_debt_ebitda", 8, _lower_is_better(m.net_debt_to_ebitda, 1.5, 4.5)),
-        ("interest_coverage", 6, _higher_is_better(m.interest_coverage, 2.0, 6.0)),
-        ("growth_streak", 6, (growth_streak_pts / 6.0) if (m.cagr_5y_pct is not None or m.streak_years > 0) else None),
-    ]
+    if reit:
+        # REIT: EPS payout ignorován; místo něj FFO/AFFO payout (váha 20 — kombinace obou metrik).
+        cov = _reit_cash_coverage(m)
+        sustainability = [
+            ("reit_ffo_affo_payout", 20, _lower_is_better(cov, 75.0, 105.0)),
+            ("net_debt_ebitda", 8, _lower_is_better(m.net_debt_to_ebitda, 1.5, 4.5)),
+            ("interest_coverage", 6, _higher_is_better(m.interest_coverage, 2.0, 6.0)),
+            ("growth_streak", 6, (growth_streak_pts / 6.0) if (m.cagr_5y_pct is not None or m.streak_years > 0) else None),
+        ]
+    else:
+        sustainability = [
+            ("payout_eps", 10, _lower_is_better(m.payout_eps_pct, 65.0, 90.0)),
+            ("fcf_payout", 10, fcf_payout_score),
+            ("net_debt_ebitda", 8, _lower_is_better(m.net_debt_to_ebitda, 1.5, 4.5)),
+            ("interest_coverage", 6, _higher_is_better(m.interest_coverage, 2.0, 6.0)),
+            ("growth_streak", 6, (growth_streak_pts / 6.0) if (m.cagr_5y_pct is not None or m.streak_years > 0) else None),
+        ]
 
     # P/E vs referenční hodnoty (odvětvový medián + aprox. 5letý medián firmy); bereme nepříznivější
     pe_refs = []
@@ -156,7 +213,14 @@ def compute_score(
     ]
 
     fcf_health: Optional[float] = None
-    if snap.fcf_ttm is not None:
+    if reit:
+        cov = _reit_cash_coverage(m)
+        if cov is not None:
+            pts = 5.0 + (3.0 if cov <= 80.0 else 0.0)
+            fcf_health = pts / 8.0
+        elif snap.fcf_ttm is not None and snap.fcf_ttm <= 0:
+            fcf_health = 0.0
+    elif snap.fcf_ttm is not None:
         if snap.fcf_ttm <= 0:
             fcf_health = 0.0
         else:

@@ -71,6 +71,11 @@ def format_ticker_block(report: Dict[str, Any], color: bool = True) -> str:
         f"  Payout (EPS): {fmt(div.get('payout_ratio_eps_pct'),1,'%')}   "
         f"FCF payout: {fmt(div.get('fcf_payout_ratio_pct'),1,'%')}"
     )
+    if div.get("ffo_payout_ratio_pct") is not None or div.get("affo_payout_ratio_pct") is not None:
+        lines.append(
+            f"  REIT payout (FFO / AFFO): {fmt(div.get('ffo_payout_ratio_pct'),1,'%')} / "
+            f"{fmt(div.get('affo_payout_ratio_pct'),1,'%')}"
+        )
     lines.append(
         f"  Růst dividend CAGR (3Y/5Y/10Y): {fmt(div.get('growth_cagr_3y_pct'),2,'%')} / "
         f"{fmt(div.get('growth_cagr_5y_pct'),2,'%')} / {fmt(div.get('growth_cagr_10y_pct'),2,'%')}"
@@ -101,10 +106,17 @@ def format_ticker_block(report: Dict[str, Any], color: bool = True) -> str:
     )
 
     sec("Férová cena & nákupní zóna")
-    lines.append(
-        f"  Gordon (r={fv.get('required_return_pct',8):.0f} %, g≈{fmt(fv.get('growth_assumed_pct'),1,'%')}): "
-        f"{fmt(fv.get('gordon_price'),2,' '+cur)}   Výnosová metoda: {fmt(fv.get('yield_based_price'),2,' '+cur)}"
-    )
+    if fv.get("ddm_model") == "two_stage":
+        ddm_line = (
+            f"  Two-stage DDM (r={fv.get('required_return_pct',8):.0f} %, g1≈{fmt(fv.get('growth_assumed_pct'),1,'%')}): "
+            f"{fmt(fv.get('two_stage_price'),2,' '+cur)}   Výnosová metoda: {fmt(fv.get('yield_based_price'),2,' '+cur)}"
+        )
+    else:
+        ddm_line = (
+            f"  Gordon (r={fv.get('required_return_pct',8):.0f} %, g≈{fmt(fv.get('growth_assumed_pct'),1,'%')}): "
+            f"{fmt(fv.get('gordon_price'),2,' '+cur)}   Výnosová metoda: {fmt(fv.get('yield_based_price'),2,' '+cur)}"
+        )
+    lines.append(ddm_line)
     if fv.get("fair_value"):
         lines.append(
             f"  FÉROVÁ CENA: {fv['fair_value']} {cur}   NÁKUPNÍ ZÓNA: "

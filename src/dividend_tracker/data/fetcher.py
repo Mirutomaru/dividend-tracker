@@ -69,6 +69,19 @@ def _pick(df: Optional[pd.DataFrame], *candidates: str) -> Optional[float]:
     return None
 
 
+def resolve_fcf(fcf_direct: Optional[float], ocf: Optional[float], capex_signed: Optional[float]) -> Optional[float]:
+    """Vyřeší FCF: preferuje hodnotu hlášenou direktně providerem, fallback je OCF − CapEx.
+
+    ``capex_signed`` se předává tak, jak ho uvádí CF výkaz (záporné). Záporný FCF
+    z libovolného zdroje je platná data — jako „chybějící“ se neinterpretuje.
+    """
+    if fcf_direct is not None:
+        return float(fcf_direct)
+    if ocf is not None and capex_signed is not None:
+        return float(ocf + capex_signed)  # OCF − |CapEx|; CapEx v výkazu je záporné
+    return None
+
+
 def _retry(fn: Callable[[], Any], attempts: int = 2, delay: float = 1.5) -> Any:
     last_exc: Optional[Exception] = None
     for i in range(attempts):
@@ -133,7 +146,17 @@ def build_snapshot(ticker: str) -> Snapshot:
     except Exception as exc:  # noqa: BLE001
         log.warning("%s: chyba při sběru dividend (%s)", tk, exc)
         div_series = None
-    from ..domain.dividends import aggregate_dividends
+    from ..domain.dividends import aggregate_dividends, split_adjust_dividends
+
+    # Historické DPS škálujeme na aktuální počet akcií (splity po dané výplatě),
+    # jinak by CAGR a yield vs. 5Y průměr u firem se splity nedávaly smysl.
+    if div_series is not None and len(div_series):
+        try:
+            splits = t.splits
+            div_series = split_adjust_dividends(div_series, splits)
+        except Exception as exc:  # noqa: BLE001 — bez splitů pokračujeme s neupravenou historií
+            log.warning("%s: splity nedostupné (%s), dividendní historie není split-adjusted", tk, exc)
+            gaps.append("splits_unadjusted")
 
     annual, counts, dps_ttm = aggregate_dividends(div_series)
     snap.annual_dps = {int(k): v for k, v in annual.items()}
@@ -195,11 +218,28 @@ def build_snapshot(ticker: str) -> Snapshot:
     snap.equity = _pick(balance_sheet, "Stockholders Equity", "Total Stockholder Equity")
 
     ocf = _pick(cashflow, "Operating Cash Flow", "Net Income From Continuing Operating Activity")
-    capex = _pick(cashflow, "Capital Expenditure", "CapEx")
-    if ocf is not None and capex is not None:
-        snap.fcf_ttm = round(ocf + capex, 0)  # capex v yfinance je záporné
+    capex_signed = _pick(cashflow, "Capital Expenditure", "CapEx")
+
+    # FCF: provider ho hlásí někdy direktně (info.freeCashflow), jindy jen OCF/CapEx → fallback.
+    fcf_direct = _to_float(info.get("freeCashflow"))
+    snap.fcf_ttm = resolve_fcf(fcf_direct, ocf, capex_signed)
+    if snap.fcf_ttm is not None:
+        snap.fcf_ttm = round(snap.fcf_ttm, 0)
     else:
         gaps.append("fcf")
+
+    # D&A a CapEx — vstupy pro FFO/AFFO odhad u REIT (Snapshot.capex = kladná velikost |CapEx|).
+    da = _pick(cashflow, "Depreciation And Amortization", "Depreciation")
+    snap.depreciation_amortization = da
+    snap.capex = abs(capex_signed) if capex_signed is not None else None
+
+    from ..domain.sectors import is_reit
+
+    if is_reit(snap.sector):  # bez D&A/CapEx nelze REIT payout spočítat — explicitní gap
+        if da is None:
+            gaps.append("depreciation_amortization")
+        if snap.capex is None:
+            gaps.append("capex")
 
     div_paid = _pick(cashflow, "Cash Dividends Paid", "Common Stock Dividend Paid", "Dividends Paid")
     snap.dividends_paid = abs(div_paid) if div_paid is not None else None
@@ -280,4 +320,4 @@ def get_sector_benchmark(sector: Optional[str], force_refresh: bool = False) -> 
     return data
 
 
-__all__ = ["DataFetchError", "build_snapshot", "get_sector_benchmark"]
+__all__ = ["DataFetchError", "build_snapshot", "get_sector_benchmark", "resolve_fcf"]

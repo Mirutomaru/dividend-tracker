@@ -30,12 +30,32 @@ def test_gordon_and_yield_based_known_values():
 
 
 def test_growth_guard_when_g_ge_r():
+    """CAGR 5Y ≥ požadovaná výkonnost → Gordon diverguje, použije se two-stage DDM."""
     snap = make_snapshot(price=50.0, dps_ttm=3.0, forward_dividend_rate=None)
     fv = compute_fair_value(snap, _metrics(cagr_5y_pct=20.0), required_return_pct=5.0)
-    # g by bylo 6 % (clip), ale r=5 % → konzervativní ořez na r-3 % = 2 %
-    assert fv.growth_assumed_pct == 2.0
-    # D1 = 3*1.02 = 3.06; F = 3.06/0.03 = 102.0
-    assert math.isclose(fv.gordon_price, 102.0, rel_tol=1e-9)
+    # CAGR 20 % oříznutý na [0 %, +15 %] → g1 = 15 %; terminální růst min(7.5, 3) = 3 %
+    assert fv.ddm_model == "two_stage"
+    assert fv.growth_assumed_pct == 15.0
+    assert fv.gordon_price is None
+    # P = Σ_{t=1..5} D_t/(1+r)^t + TV/(1+r)^5, kde TV = D_6/(r − g_t) — ruční výpočet
+    expected = sum(3.0 * 1.15 ** t / 1.05 ** t for t in range(1, 6)) \
+        + (3.0 * 1.15 ** 5 * 1.03 / (0.05 - 0.03)) / 1.05 ** 5
+    assert fv.two_stage_price is not None
+    assert math.isclose(fv.two_stage_price, round(expected, 2), rel_tol=1e-9)
+
+
+def test_two_stage_fallback_to_gordon_when_not_converging():
+    """Two-stage nekonverguje (r ≤ terminální růst) → konzervativní ořez Gordonu."""
+    snap = make_snapshot(price=50.0, dps_ttm=3.0, forward_dividend_rate=None)
+    fv = compute_fair_value(snap, _metrics(cagr_5y_pct=20.0), required_return_pct=2.0)
+    # terminální růst 3 % > r = 2 % → two-stage None; Gordon: g clip [−2 %, +6 %] = 6 %,
+    # pak g ≥ r → konzervativní ořez na max(0, r − 3 %) = 0 %
+    assert fv.ddm_model == "gordon"
+    assert fv.two_stage_price is None
+    assert fv.growth_assumed_pct == 0.0
+    # D1 = 3*1.00 = 3.0; F = 3.0/0.02 = 150.0
+    assert fv.gordon_price is not None
+    assert math.isclose(fv.gordon_price, 150.0, rel_tol=1e-9)
     assert any("konzervativní ořez" in n for n in fv.notes)
 
 
