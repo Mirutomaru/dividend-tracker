@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -25,9 +26,28 @@ log = logging.getLogger(__name__)
 
 def _preprocess(argv: Optional[List[str]]) -> List[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
-    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio", "alert", "export"} and not argv[0].startswith("-"):
+    if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio", "alert", "export", "scan"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
     return list(argv or [])
+
+
+def _read_tickers_from_file(path: Path) -> List[str]:
+    """Načte tickery ze souboru (jeden na řádek, `#` = komentář).
+
+    Vrací normalizované (uppercase, bez mezer) unikátní tickery v pořadí
+    prvního výskytu. Prázdné řádky a komentáře se ignorují.
+    """
+    seen: set[str] = set()
+    out: List[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip().upper()
+        if not line or line in seen:
+            continue
+        # ticker = alfanumerický token (povoleny tečky, např. BRK.B)
+        if re.fullmatch(r"[A-Z][A-Z0-9.\-]*", line):
+            seen.add(line)
+            out.append(line)
+    return out
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -142,6 +162,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--refresh", action="store_true",
         help="pro analysis: ignorovat disk cache snapshotů (TTL 1 den) a stáhnout data znovu",
     )
+
+    p_scan = sub.add_parser("scan", parents=[_common], help="vyfiltrovat akcie se zeleným Safety flagem a signálem BUY_ZONE")
+    p_scan.add_argument(
+        "--file", metavar="PATH", default=None,
+        help="soubor s tickerů (jeden na řádek); bez --file se použije trvalá watchlista z DB",
+    )
+    p_scan.add_argument("tickers", nargs="*", help="ticker(y) ke skenování; bez argumentu a bez --file → watchlista")
+    p_scan.add_argument("--no-benchmark", action="store_true", help="přeskočit odvětvový benchmark")
+    p_scan.add_argument(
+        "--refresh", action="store_true",
+        help="ignorovat disk cache snapshotů (TTL 1 den) a stáhnout data znovu",
+    )
+    p_scan.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi (pro výchozí watchlistu)")
 
     p_cfg = sub.add_parser("config", help="zobrazit/nastavit konfiguraci (.env)")
     p_cfg.add_argument(
@@ -542,6 +575,77 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print(f"Odebráno {k} z .env")
             else:
                 print(f"{k} nebyl v .env nalezen.")
+        return 0
+
+    if args.cmd == "scan":
+        from .data.db import DEFAULT_DB_PATH, Database
+        from .domain.scoring import SIGNAL_BUY_ZONE
+
+        # Zdroj tickerů: --file > pozicní argumenty > trvalá watchlista z DB.
+        tickers: List[str] = []
+        if args.file:
+            fpath = Path(args.file).expanduser()
+            if not fpath.exists():
+                print(f"Soubor s tickerů neexistuje: {fpath}", file=sys.stderr)
+                return 2
+            tickers = _read_tickers_from_file(fpath)
+        elif args.tickers:
+            tickers = [t.strip().upper() for t in args.tickers]
+
+        if not tickers:
+            db = Database(args.db or DEFAULT_DB_PATH)
+            try:
+                tickers = [r["ticker"] for r in db.list_watchlist()]
+            finally:
+                db.close()
+        if not tickers:
+            print(
+                "Žádné tickery ke skenování — použijte --file, tickery jako argumenty "
+                "nebo naplňte watchlistu (divtrack sync / watch add).",
+                file=sys.stderr,
+            )
+            return 2
+
+        reports: list[dict] = []
+        n_errors = 0
+        for i, tk in enumerate(tickers, 1):
+            print(f"[{i}/{len(tickers)}] Skenuji {tk} …")
+            try:
+                rep = analyze_ticker(
+                    tk,
+                    use_benchmark=not args.no_benchmark,
+                    refresh=args.refresh,
+                )
+                reports.append(rep)
+            except DataFetchError as exc:
+                n_errors += 1
+                print(f"  ✗ Nedostupná data: {exc}", file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001 — chyba nesmí zastavit zbývající tickery
+                log.exception("neočekávaná chyba při skenu %s", tk)
+                n_errors += 1
+                print(f"  ✗ Neočekánaná chyba: {exc}", file=sys.stderr)
+
+        # Filtre: zelený Safety flag + signál BUY_ZONE (podhodnocení).
+        matches = [
+            r for r in reports
+            if r["score"].get("safety_flag") == "green" and SIGNAL_BUY_ZONE in r["score"].get("signals", [])
+        ]
+
+        print()
+        if not reports:
+            print("Žádný ticker se nepodařilo analyzovat.", file=sys.stderr)
+            return 2
+        if matches:
+            print(f"Z {len(reports)} analyzovaných akcií splňuje zelený flag + BUY_ZONE: {len(matches)}")
+            print()
+            print(format_summary_table(matches))
+            for rep in matches:
+                print("\n" + "=" * 78)
+                print(format_ticker_block(rep))
+        else:
+            print(f"Žádná akce ze {len(reports)} analyzovaných nesplňuje zelený flag + BUY_ZONE.")
+        if n_errors:
+            print(f"(selhalo: {n_errors})", file=sys.stderr)
         return 0
 
     if args.cmd != "analyze":
