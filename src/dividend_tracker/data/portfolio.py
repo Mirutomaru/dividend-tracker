@@ -25,9 +25,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from ..domain.tax import net_amount, withholding_rate
 from .db import Database
 from .watchlist import _build_series, _ttm
-from ..domain.tax import net_amount, withholding_rate
 
 log = logging.getLogger(__name__)
 

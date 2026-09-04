@@ -96,8 +96,8 @@ def compute_fair_value(
             )
         else:
             notes.append(
-                f"Two-stage DDM nekonverguje (r ≤ terminální růst) — "
-                f"konzervativní ořez Gordonu."
+                "Two-stage DDM nekonverguje (r ≤ terminální růst) — "
+                "konzervativní ořez Gordonu."
             )
 
     if ddm_model == "gordon":

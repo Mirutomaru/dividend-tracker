@@ -4,7 +4,8 @@ Profesionální tracker a valuační analyzátor **dividendových akcií**. Sled
 vybrané tickery, aplikace stáhne fundamentální data (yfinance), spočítá kompletní sadu
 metrik udržitelnosti dividendy, valuace a solvence, přiřadí skóre 0–100 s bezpečnostním
 flagem, detekuje **dividendové pasti** i **nákupní zóny** a odhadne férovou cenu pomocí
-Gordon Growth Modelu + výnosové metody.
+Gordon Growth Modelu, two-stage DDM (pro vysoký růst) a výnosové metody. REITY se
+posuzují jinak — udržitelnost měří FFO/AFFO cash coverage místo zkresleného EPS payoutu.
 
 > ⚠️ Není investiční poradenství. Data pocházejí z veřejného zdroje (Yahoo Finance via
 > `yfinance`) a mohou být nepřesné nebo se opozdit. Vždy ověřte kritická čísla ve
@@ -15,21 +16,28 @@ Gordon Growth Modelu + výnosové metody.
 - Ruční výběr tickerů — jednoduché GUI (Tkinter) i CLI
 - Metriky podle specifikace:
   - **A. Dividendy & udržitelnost**: trailing/forward yield, payout ratio (EPS), FCF
-    payout ratio, CAGR růstu dividendy (3Y/5Y/10Y), streak růstu výplat
+    payout ratio, **FFO/AFFO payout (REIT)**, CAGR růstu dividendy (3Y/5Y/10Y), streak
+    růstu výplat; historická DPS je **split-adjusted** na aktuální počet akcií
   - **B. Ocenění & valuace**: P/E TTM + forward vs odvětvový medián a 5letý historický
     průměr firmy, P/FCF, EV/EBITDA vs odvětví, FCF yield, aktuální yield vs 5Y průměr
   - **C. Zdraví & solvence**: Net Debt/EBITDA, Interest Coverage, ROIC
 - **Scoring 0–100** (udržitelnost 40 + valuace 35 + kvalita/růst 25) s přepočtem vah
   napříč dostupnými daty (chybějící položka netrestá nulou)
 - **Dividend Safety Flag**: zelená / žlutá / červená dle pevných prahů (payout < 65 %,
-  FCF payout < 70 %, ND/EBITDA < 3.0x, interest coverage > 4.0x; REIT/utility má
-  uvolněné pravidlo FCF payout)
+  FCF payout < 70 %, ND/EBITDA < 3.0x, interest coverage > 4.0x). REITY se posuzují
+  jinak: EPS payout je ignorován a krytí dividendy měří **FFO/AFFO payout** (> 100 % =
+  červená, < 75 % + nízká páka = zelená); strukturovaně záporné FCF se u REITU netrestá,
+  když existuje FFO/AFFO krytí. Utility mají uvolněné pravidlo FCF payout.
 - **Signály**: `BUY_ZONE_UNDERVALUED` (yield > +15 % nad 5Y průměrem + zelený flag),
   `DIVIDEND_TRAP` (yield > 8 % a FCF payout > 100 % / záporné FCF) — trap omezuje
   skóre na ≤25, červený flag na ≤39
 - **Férová cena & nákupní zóna**: Gordon model `P = D1/(r−g)` (výchozí r=8 %, g = 5Y CAGR
   dividendy oříznutý) + výnosová metoda (cena, při které forward DPS dává 5Y průměrný
-  výnos); zóna `[0.85·FV, FV]` a verdikt podhodnoceno/férové/přehodnoceno (±10 %)
+  výnos); zóna `[0.85·FV, FV]` a verdikt podhodnoceno/férové/přehodnoceno (±10 %).
+  Pokud je 5Y CAGR ≥ požadovaná výkonnost (Gordon by divergoval), použije se **two-stage
+  DDM** — fáze 1: růst = CAGR oříznutý na [0 %, +15 %] po dobu 5 let, fáze 2: terminální
+  růst `min(g1/2, 3 %)`. Pokud ani ten nekonverguje (r ≤ terminální růst), spadne se na
+  konzervativní ořez Gordonu.
 - Normalizovaný **JSON export** reportu (schéma viz níže)
 - Disková cache odvětvových benchmarků (7 dní), retry na provider chyby, strukturované logování
 
@@ -178,6 +186,7 @@ se nainstaluje do systémového cronu (02:30, log do `~/.cache/dividend-tracker/
     "dividend": {
       "yield_trailing_pct": 7.1, "yield_forward_pct": 7.2, "dps_ttm": 4.5,
       "payout_ratio_eps_pct": 52.0, "fcf_payout_ratio_pct": 61.0,
+      "ffo_payout_ratio_pct": null, "affo_payout_ratio_pct": null,
       "growth_cagr_3y_pct": 4.8, "growth_cagr_5y_pct": 4.9, "growth_cagr_10y_pct": 5.0,
       "dividend_streak_years": 27
     },
@@ -195,8 +204,9 @@ se nainstaluje do systémového cronu (02:30, log do `~/.cache/dividend-tracker/
     "quality_growth_pct": 79.0}, "reasons": ["..."]
   },
   "fair_value": {
-    "required_return_pct": 8.0, "growth_assumed_pct": 4.9,
-    "gordon_price": 112.3, "yield_based_price": 70.3, "fair_value": 91.3,
+    "required_return_pct": 8.0, "growth_assumed_pct": 4.9, "ddm_model": "gordon",
+    "gordon_price": 112.3, "two_stage_price": null, "yield_based_price": 70.3,
+    "fair_value": 91.3,
     "buy_zone_low": 77.6, "buy_zone_high": 91.3,
     "verdict": "undervalued", "verdict_display": "Podhodnoceno (cena < 90 % FV)"
   },
@@ -214,6 +224,15 @@ se nainstaluje do systémového cronu (02:30, log do `~/.cache/dividend-tracker/
   (`data/peers.py`, ~8–10 tickerů na sektor), cache 7 dní.
 - `FCF payout` používá roční „dividends paid“ z CF výkazu; u firem s nepravidelným
   cashflow může mírně kolísat mezi lety.
+- **Split-adjustment dividend**: yfinance vrací dividendy tak, jak byly vyplaceny — po
+  pozdějším splitu jsou historické per-share hodnoty na starém počtu akcií. Každá
+  minulá platba se proto škáluje součinem `1/faktor` všech splitů proběhlých PO ní
+  (4:1 forward = faktor 4, reverse < 1; NaN/≤0 faktory se ignorují). Bez této úpravy by
+  CAGR i srovnání yieldu s aktuální cenou u firem se splity nedávaly smysl. Pokud splity
+  nejsou dostupné, historie zůstává neupravená a report hlásí `data_gaps: splits_unadjusted`.
+- **FFO/AFFO odhad (REIT)**: FFO ≈ NI + D&A; AFFO ≈ FFO − CapEx (bez rozlišení
+  maintenance/growth capex). Hodnoty jsou orientační — reálné FFO z výroční zprávy se
+  může lišit o položky jako amortizace přeměrných cen nemovitostí.
 - Labely řádků ve výkazech se v provideru občas mění — fetcher zkouší více variant a
   chybějící položky hlásí do `data_gaps` místo tichého selhání.
 

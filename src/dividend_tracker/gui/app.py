@@ -11,14 +11,13 @@ import logging
 import queue
 import re
 import threading
-from typing import Dict, List
-
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from typing import Dict, List
 
 from ..data.fetcher import DataFetchError
 from ..pipeline import analyze_ticker
-from ..presentation.console import format_summary_table, format_ticker_block
+from ..presentation.console import format_ticker_block
 from ..presentation.report import export_json
 
 log = logging.getLogger(__name__)
@@ -43,8 +42,6 @@ class DividendTrackerApp:
     # ------------------------------ UI konstrukce ---------------------------------
 
     def _build_ui(self) -> None:
-        pad = {"padx": 6, "pady": 4}
-
         # horní lišta — výběr tickeru
         top = ttk.Frame(self.root, padding=8)
         top.pack(side=tk.TOP, fill=tk.X)
@@ -206,7 +203,7 @@ class DividendTrackerApp:
     def _on_result(self, rep: dict) -> None:
         tk_ = rep["ticker"]
         self.reports[tk_] = rep
-        m_div, m_health = rep["metrics"]["dividend"], rep["metrics"]["health"]
+        m_div = rep["metrics"]["dividend"]
         sc, fv = rep["score"], rep["fair_value"]
 
         safety_disp = {"green": "ZELENÁ", "yellow": "ŽLUTÁ", "red": "ČERVENÁ"}.get(sc.get("safety_flag") or "", "—")

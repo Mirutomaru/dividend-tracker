@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import math
 
-from dividend_tracker.domain.metrics import compute_metrics
 from dividend_tracker.domain.dividends import aggregate_dividends, cagr, dividend_streak, full_years
-from tests.conftest import make_snapshot
+from dividend_tracker.domain.metrics import compute_metrics
 
 
 def test_yields_and_payouts(healthy_snapshot):

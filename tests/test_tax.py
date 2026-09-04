@@ -16,7 +16,6 @@ from dividend_tracker.domain.tax import (
     withholding_rate,
 )
 
-
 # ------------------------------------------------------------------ sazby
 
 def test_builtin_rates():

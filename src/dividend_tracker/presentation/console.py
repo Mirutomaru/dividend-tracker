@@ -169,7 +169,7 @@ def format_summary_table(reports: List[Dict[str, Any]], color: bool = True) -> s
         return sep.join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
 
     out = [line(headers), line(["-" * w for w in widths])]
-    for r_rep, cells in zip(reports, rows):
+    for _r_rep, cells in zip(reports, rows):
         flag_color = {"ZELENÁ": "g", "ŽLUTÁ": "y", "ČERVENÁ": "r"}.get(cells[6], "")
         if color:
             cells = list(cells)

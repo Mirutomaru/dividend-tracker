@@ -10,7 +10,7 @@ import time
 import pytest
 
 from dividend_tracker.data.fetcher import DataFetchError
-from dividend_tracker.web.server import JobManager, create_app
+from dividend_tracker.web.server import create_app
 
 
 @pytest.fixture()
@@ -221,7 +221,6 @@ def test_invalid_params_rejected(server):
 
 def test_watchlist_endpoint_empty(seeded_server):
     """Prázdná DB → prázdný seznam, ale endpoint funguje."""
-    from dividend_tracker.data.db import Database
 
     # seeded_server má data; ověřit strukturu odpovědi.
     status, body = _request(seeded_server, "GET", "/api/watchlist")

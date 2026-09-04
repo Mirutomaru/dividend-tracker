@@ -371,7 +371,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if args.cmd == "alert":
-        from .data.alerts import VALID_CONDITIONS, add_alert, evaluate_alerts
+        from .data.alerts import add_alert, evaluate_alerts
         from .data.db import DEFAULT_DB_PATH, Database
 
         db = Database(args.db or DEFAULT_DB_PATH)

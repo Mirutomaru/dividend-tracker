@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pandas as pd
 from typing import Dict, Optional, Tuple
+
+import pandas as pd
 
 
 def split_adjust_dividends(

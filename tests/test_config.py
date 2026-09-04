@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from dividend_tracker.config import (
     _parse_env_file,
     load_env,

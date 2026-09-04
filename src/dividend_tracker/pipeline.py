@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from .data.fetcher import DataFetchError, build_snapshot, get_sector_benchmark
+from .data.fetcher import build_snapshot, get_sector_benchmark
 from .domain.metrics import compute_metrics
 from .domain.scoring import compute_score
 from .domain.valuation import compute_fair_value

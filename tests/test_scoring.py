@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
+from tests.conftest import make_benchmark
 
 from dividend_tracker.domain.metrics import compute_metrics
 from dividend_tracker.domain.scoring import (
@@ -11,7 +11,6 @@ from dividend_tracker.domain.scoring import (
     SIGNAL_NO_DIVIDEND,
     compute_score,
 )
-from tests.conftest import make_benchmark, make_snapshot
 
 
 def test_healthy_green_flag_high_score(healthy_snapshot):
