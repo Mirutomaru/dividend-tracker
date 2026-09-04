@@ -31,6 +31,10 @@ def _preprocess(argv: Optional[List[str]]) -> List[str]:
     return list(argv or [])
 
 
+# Ticker = alfanumerický token (povoleny tečky a pomlčky, např. BRK.B)
+_TICKER_RE = re.compile(r"[A-Z][A-Z0-9.\-]*")
+
+
 def _read_tickers_from_file(path: Path) -> List[str]:
     """Načte tickery ze souboru (jeden na řádek, `#` = komentář).
 
@@ -43,8 +47,7 @@ def _read_tickers_from_file(path: Path) -> List[str]:
         line = raw.split("#", 1)[0].strip().upper()
         if not line or line in seen:
             continue
-        # ticker = alfanumerický token (povoleny tečky, např. BRK.B)
-        if re.fullmatch(r"[A-Z][A-Z0-9.\-]*", line):
+        if _TICKER_RE.fullmatch(line):
             seen.add(line)
             out.append(line)
     return out
@@ -593,8 +596,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             except OSError as exc:
                 print(f"Chyba při čtení souboru {fpath}: {exc}", file=sys.stderr)
                 return 2
+            if not scan_tickers:
+                # Explicitně zadaný soubor nesmí tichounce spadnout na celou watchlistu.
+                print(
+                    f"Žádné platné tickery v souboru {fpath} "
+                    "(jeden na řádek, '#' = komentář).",
+                    file=sys.stderr,
+                )
+                return 2
         elif args.tickers:
-            scan_tickers = [t.strip().upper() for t in args.tickers]
+            for t in args.tickers:
+                tk = t.strip().upper()
+                if not _TICKER_RE.fullmatch(tk):
+                    print(f"Ignorován neplatný ticker: {t!r}", file=sys.stderr)
+                    continue
+                if tk not in scan_tickers:
+                    scan_tickers.append(tk)
+            if not scan_tickers:
+                print("Žádné platné tickery — zkontrolujte formát (např. KO, BRK.B).", file=sys.stderr)
+                return 2
 
         if not scan_tickers:
             db = Database(args.db or DEFAULT_DB_PATH)

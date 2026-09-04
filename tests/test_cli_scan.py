@@ -68,7 +68,7 @@ def test_scan_filters_green_buy_zone(monkeypatch, capsys):
     assert "KO" in out                          # match v tabulce
     assert "XYZ" not in out.split("splňuje")[1]  # ne-match mimo výslednou tabulku
     assert "ABC" not in out.split("splňuje")[1]
-    assert "1" in out                           # počet shod
+    assert "Z 3 analyzovaných akcií splňuje zelený flag + BUY_ZONE: 1" in out
 
 
 def test_scan_no_match_message(monkeypatch, capsys):
@@ -122,6 +122,54 @@ def test_scan_unreadable_file_error(monkeypatch, tmp_path, capsys):
     assert rc == 2
     err = capsys.readouterr().err
     assert "Chyba při čtení souboru" in err
+
+
+def test_scan_empty_file_no_db_fallback(monkeypatch, tmp_path, capsys):
+    """--file bez platných tickerů → rc 2; nesmí spadnout na watchlistu z DB."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "scan.db")
+    try:
+        db.upsert_watchlist("KO")   # v DB je ticker — fallback by ho analyzoval
+    finally:
+        db.close()
+
+    f = tmp_path / "prazdny.txt"
+    f.write_text("# jen komentář\n\n", encoding="utf-8")
+
+    seen = _mock_analyze(monkeypatch, {"KO": _scan_report("KO")})
+    rc = main(["scan", "--file", str(f), "--db", str(tmp_path / "scan.db")])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Žádné platné tickery v souboru" in err
+    assert seen == []               # nic se nespustilo
+
+
+def test_scan_invalid_positional_tickers(monkeypatch, tmp_path, capsys):
+    """Neplatné pozicní tickery se ignorují (warning); všechny neplatné → rc 2."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "scan.db")
+    try:
+        db.upsert_watchlist("KO")   # fallback by spustil KO — nesmí
+    finally:
+        db.close()
+
+    seen = _mock_analyze(monkeypatch, {"KO": _scan_report("KO"), "ABC": _scan_report("ABC")})
+    rc = main(["scan", "1BAD!", "abc", "--db", str(tmp_path / "scan.db")])
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Ignorován neplatný ticker" in err
+    assert [s["ticker"] for s in seen] == ["ABC"]   # jen validní, bez fallbacku
+
+    # všechny neplatné → rc 2 (a opět žádný fallback na watchlistu)
+    capsys.readouterr()
+    rc = main(["scan", "1BAD!", "--db", str(tmp_path / "scan.db")])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Žádné platné tickery" in err
 
 
 # ------------------------------------------------------------------ fallback na watchlistu
