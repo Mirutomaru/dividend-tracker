@@ -40,6 +40,11 @@ posuzují jinak — udržitelnost měří FFO/AFFO cash coverage místo zkreslen
   konzervativní ořez Gordonu.
 - Normalizovaný **JSON export** reportu (schéma viz níže)
 - Disková cache odvětvových benchmarků (7 dní), retry na provider chyby, strukturované logování
+- **Srážková daň podle země původu** — čistý yield (`net_yield_pct`) s vestavěnými sazbami
+  a přepsáním přes `divtrack portfolio tax set --country US 15`; po `sync` se v konzoli
+  tiskne srovnávací tabulka watchlisty s hrubým → čistým yieldem
+- **`divtrack scan`** — filtr watchlisty na akcie se zeleným Safety flagem + signálem
+  BUY_ZONE (pozicní tickery / `--file` / trvalá watchlista z DB)
 
 ## Struktura projektu (Clean Architecture)
 
@@ -67,7 +72,7 @@ src/dividend_tracker/
 ├── web/                    # Web GUI — lehký HTTP server na stdlib, bez závislostí
 │   ├── server.py           # JobManager + JSON API (/api/analyze, /api/jobs/<id>)
 │   └── static/             # index.html · style.css (Apple-style) · app.js
-└── cli.py                  # divtrack analyze / gui / web
+└── cli.py                  # divtrack analyze / sync / watch / portfolio / alert / export / scan / config / gui / web
 ```
 
 ## Instalace
@@ -97,19 +102,34 @@ uloží všechny reporty do souboru. Analýza běží v pozadí — UI se nemrz�
 divtrack analyze KO JNJ MSFT            # zkratka bez podpříkazu funguje taky
 divtrack analyze KO --json report.json  # export do JSON
 divtrack analyze KO --required-return 9.5   # vlastní požadovaná výkonnost pro Gordon model
+divtrack analyze KO --refresh           # ignorovat disk cache snapshotů (TTL 1 den)
 
 # cache-first synchronizace dat do lokální DB (FMP fundamenty + yfinance ceny)
 divtrack sync KO JNJ MSFT               # explicitní tickery
 divtrack sync                           # vše, co je už v DB
 divtrack sync --force                   # ignorovat TTL a stáhnout znovu
+
+# sken watchlisty: pouze akcie se zeleným Safety flagem + signálem BUY_ZONE
+divtrack scan                           # trvalá watchlista z DB
+divtrack scan KO JNJ MSFT               # explicitní tickery
+divtrack scan --file watchlist.txt      # tickery ze souboru (jeden na řádek)
 ```
 
 `sync` respektuje cache-first pravidla (fundamenty 72 h, dividendová historie 7 dní)
 a denní limit FMP — čerstvá data se nikdy neopakují. Výstup ukáže počty podle zdroje
-(cached/fmp/yfinance), stav FMP čítače a aktualizované ceny.
+(cached/fmp/yfinance), stav FMP čítače a aktualizované ceny; na konci tiskne
+**srovnávací tabulku watchlisty** přímo z lokální DB (bez externích volání) se sloupci
+cena, **yield hrubý → čistý** (po srážkové dani podle země původu), streak růstu a
+příští výplata.
+
+`scan` projde všechny tickery ze zvoleného zdroje (pozicní argumenty > `--file` >
+trvalá watchlista z DB) a vypíše jen ty, které mají **zelený Safety flag** i signál
+**BUY_ZONE** (yield > +15 % nad 5Y průměrem). Chyba u jednotlivého tickeru sken
+nezastaví; až když selže vše, vrací exit code 2.
 
 Výstup `analyze`: srovnávací tabulka + detailní blok pro každý ticker (skóre, flagy,
-signály, metriky vs odvětví, férová cena a nákupní zóna).
+signály, metriky vs odvětví, férová cena a nákupní zóna). Globální i subkomandový
+`--verbose/-v` zapne podrobnější logování (INFO: cache hit/miss, retry).
 
 ## Použití — Web GUI
 
