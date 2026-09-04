@@ -115,7 +115,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_watch.add_argument("--note", default=None, help="poznámka k tickeru (add)")
     p_watch.add_argument(
         "--file", metavar="PATH", default=None,
-        help="cesta k záložnímu souboru (výchozí ~/.cache/dividend-tracker/watchlist.json)",
+        help="cesta k záložnímu souboru (výchozí ~/.config/dividend-tracker/watchlist.json)",
     )
     p_watch.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
 

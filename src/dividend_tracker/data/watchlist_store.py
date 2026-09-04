@@ -2,7 +2,7 @@
 
 Dvojí záloha:
 1. **SQLite tabulka ``watchlist``** (primární úložiště v ``data.db``).
-2. **Soubor JSON** (výchozí ``~/.cache/dividend-tracker/watchlist.json``,
+2. **Soubor JSON** (výchozí ``~/.config/dividend-tracker/watchlist.json``,
    překrytelné přes ``DIVTRACK_WATCHLIST``) — přepisuje se po každé změně
    watchlisty atomicky (tmp + rename). Pokud by se DB soubor smazal nebo
    poškodil, celý seznam se obnoví příkazem ``divtrack watch import``.
@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 #: Výchozí cesta záložního souboru watchlisty (vedle databáze).
 DEFAULT_WATCHLIST_FILE = Path(
-    os.environ.get("DIVTRACK_WATCHLIST", "~/.cache/dividend-tracker/watchlist.json")
+    os.environ.get("DIVTRACK_WATCHLIST", "~/.config/dividend-tracker/watchlist.json")
 ).expanduser()
 
 

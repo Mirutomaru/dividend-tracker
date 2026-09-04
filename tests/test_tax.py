@@ -21,6 +21,7 @@ from dividend_tracker.domain.tax import (
 def test_builtin_rates():
     assert withholding_rate("US") == 15.0
     assert withholding_rate("GB") == 0.0
+    assert withholding_rate("DE") == 26.0   # dle zadání (Master Prompt)
     # neznámá země → None (net = hrubý, konzervativní odhad)
     assert withholding_rate("XX") is None
     assert withholding_rate(None) is None

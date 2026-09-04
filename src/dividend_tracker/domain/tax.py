@@ -22,7 +22,7 @@ WITHHOLDING_RATES: Dict[str, float] = {
     "US": 15.0,   # US–CZ/EU smlouva (W-8BEN)
     "CA": 15.0,   # CZ–Kanada
     "GB": 0.0,    # UK od 2016 neuplatňuje zadržovací daň na dividendy
-    "DE": 15.0,   # CZ–Německo (při splnění podmínek smlouvy)
+    "DE": 26.0,   # CZ–Německo (dle zadání; při splnění podmínek smlouvy lze přepsat na 15 %)
     "FR": 12.8,   # CZ–Francie
     "NL": 15.0,   # CZ–Nizozemsko
     "IE": 15.0,   # CZ–Irsko
