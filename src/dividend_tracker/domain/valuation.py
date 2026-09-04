@@ -122,8 +122,9 @@ def compute_fair_value(
     if avg_yield_pct is None or avg_yield_pct <= 0:
         avg_yield_pct = m.yield_trailing_pct
         notes.append("5Y průměrný výnos nedostupný — použito aktuální trailing yield jako aproximace.")
-    fwd_dps = snap.forward_dividend_rate if (snap.forward_dividend_rate or 0) > 0 else dps
-    if avg_yield_pct and avg_yield_pct > 0:
+    fwd_rate = snap.forward_dividend_rate
+    fwd_dps = fwd_rate if (fwd_rate is not None and fwd_rate > 0) else dps
+    if avg_yield_pct is not None and avg_yield_pct > 0:
         yield_based_price = fwd_dps / (avg_yield_pct / 100.0)
 
     # ---- Férová cena, nákupní zóna, verdikt ---------------------------------------

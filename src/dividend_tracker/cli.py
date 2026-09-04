@@ -403,29 +403,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if not args.country:
                         print("Zadejte zemi: --country US", file=sys.stderr)
                         return 2
-                    code = _normalize_country(args.country)
-                    if not code:
+                    country_code = _normalize_country(args.country)
+                    if not country_code:
                         print(f"Nerozpoznaná země: {args.country}", file=sys.stderr)
                         return 2
                     rate = args.amount
                     if rate is None or not (0.0 <= rate <= 100.0):
                         print("Zadejte sazbu v rozmezí 0–100: divtrack portfolio tax set --country US 15", file=sys.stderr)
                         return 2
-                    db.set_setting(f"withholding_{code}", str(rate))
-                    print(f"Sazba pro {code} nastavena na {rate:g}% (přepsání vestavěné sazby).")
+                    db.set_setting(f"withholding_{country_code}", str(rate))
+                    print(f"Sazba pro {country_code} nastavena na {rate:g}% (přepsání vestavěné sazby).")
 
                 elif sub_action == "remove":
                     if not args.country:
                         print("Zadejte zemi: --country US", file=sys.stderr)
                         return 2
-                    code = _normalize_country(args.country)
-                    if not code:
+                    country_code = _normalize_country(args.country)
+                    if not country_code:
                         print(f"Nerozpoznaná země: {args.country}", file=sys.stderr)
                         return 2
-                    db.delete_setting(f"withholding_{code}")
-                    built_in = WITHHOLDING_RATES.get(code)
+                    db.delete_setting(f"withholding_{country_code}")
+                    built_in = WITHHOLDING_RATES.get(country_code)
                     print(
-                        f"Přepsání sazby pro {code} odstraněno — vrací se vestavěná sazba "
+                        f"Přepsání sazby pro {country_code} odstraněno — vrací se vestavěná sazba "
                         + (f"{built_in:g}%." if built_in is not None else "(žádná).")
                     )
 
@@ -582,23 +582,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         from .domain.scoring import SIGNAL_BUY_ZONE
 
         # Zdroj tickerů: --file > pozicní argumenty > trvalá watchlista z DB.
-        tickers: List[str] = []
+        scan_tickers: list[str] = []
         if args.file:
             fpath = Path(args.file).expanduser()
             if not fpath.exists():
                 print(f"Soubor s tickerů neexistuje: {fpath}", file=sys.stderr)
                 return 2
-            tickers = _read_tickers_from_file(fpath)
+            scan_tickers = _read_tickers_from_file(fpath)
         elif args.tickers:
-            tickers = [t.strip().upper() for t in args.tickers]
+            scan_tickers = [t.strip().upper() for t in args.tickers]
 
-        if not tickers:
+        if not scan_tickers:
             db = Database(args.db or DEFAULT_DB_PATH)
             try:
-                tickers = [r["ticker"] for r in db.list_watchlist()]
+                scan_tickers = [r["ticker"] for r in db.list_watchlist()]
             finally:
                 db.close()
-        if not tickers:
+        if not scan_tickers:
             print(
                 "Žádné tickery ke skenování — použijte --file, tickery jako argumenty "
                 "nebo naplňte watchlistu (divtrack sync / watch add).",
@@ -606,17 +606,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return 2
 
-        reports: list[dict] = []
+        scan_reports: list[dict] = []
         n_errors = 0
-        for i, tk in enumerate(tickers, 1):
-            print(f"[{i}/{len(tickers)}] Skenuji {tk} …")
+        for i, tk in enumerate(scan_tickers, 1):
+            print(f"[{i}/{len(scan_tickers)}] Skenuji {tk} …")
             try:
                 rep = analyze_ticker(
                     tk,
                     use_benchmark=not args.no_benchmark,
                     refresh=args.refresh,
                 )
-                reports.append(rep)
+                scan_reports.append(rep)
             except DataFetchError as exc:
                 n_errors += 1
                 print(f"  ✗ Nedostupná data: {exc}", file=sys.stderr)
@@ -627,23 +627,23 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # Filtre: zelený Safety flag + signál BUY_ZONE (podhodnocení).
         matches = [
-            r for r in reports
+            r for r in scan_reports
             if r["score"].get("safety_flag") == "green" and SIGNAL_BUY_ZONE in r["score"].get("signals", [])
         ]
 
         print()
-        if not reports:
+        if not scan_reports:
             print("Žádný ticker se nepodařilo analyzovat.", file=sys.stderr)
             return 2
         if matches:
-            print(f"Z {len(reports)} analyzovaných akcií splňuje zelený flag + BUY_ZONE: {len(matches)}")
+            print(f"Z {len(scan_reports)} analyzovaných akcií splňuje zelený flag + BUY_ZONE: {len(matches)}")
             print()
             print(format_summary_table(matches))
             for rep in matches:
                 print("\n" + "=" * 78)
                 print(format_ticker_block(rep))
         else:
-            print(f"Žádná akce ze {len(reports)} analyzovaných nesplňuje zelený flag + BUY_ZONE.")
+            print(f"Žádná akce ze {len(scan_reports)} analyzovaných nesplňuje zelený flag + BUY_ZONE.")
         if n_errors:
             print(f"(selhalo: {n_errors})", file=sys.stderr)
         return 0
@@ -653,7 +653,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     tickers = [t.strip().upper() for t in args.tickers]
-    reports: list[dict] = []
+    analyze_reports: list[dict] = []
     n_errors = 0
     for i, tk in enumerate(tickers, 1):
         print(f"\n[{i}/{len(tickers)}] Analyzuji {tk} …")
@@ -664,29 +664,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                 use_benchmark=not args.no_benchmark,
                 refresh=args.refresh,
             )
-            reports.append(rep)
+            analyze_reports.append(rep)
         except DataFetchError as exc:
             n_errors += 1
             print(f"  ✗ Nedostupná data: {exc}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001 — neočekánaná chyba nesmí zastavit zbývající tickery
-            log.exception("neočekánaná chyba při analýze %s", tk)
+            log.exception("neočekávaná chyba při analýze %s", tk)
             n_errors += 1
             print(f"  ✗ Neočekánaná chyba: {exc}", file=sys.stderr)
 
-    if reports:
+    if analyze_reports:
         print()
-        print(format_summary_table(reports))
-        for rep in reports:
+        print(format_summary_table(analyze_reports))
+        for rep in analyze_reports:
             print("\n" + "=" * 78)
             print(format_ticker_block(rep))
     else:
         print("Žádný ticker se nepodařilo analyzovat.", file=sys.stderr)
 
-    if args.json and reports:
-        path = export_json(reports, args.json)
+    if args.json and analyze_reports:
+        path = export_json(analyze_reports, args.json)
         print(f"\nJSON report uložen do: {path}")
 
-    return 0 if reports else 2
+    return 0 if analyze_reports else 2
 
 
 if __name__ == "__main__":

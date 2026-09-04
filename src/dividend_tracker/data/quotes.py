@@ -58,12 +58,12 @@ def fetch_quotes(tickers: List[str]) -> Dict[str, Dict[str, Optional[float]]]:
             continue
         try:
             fi = yf.Ticker(tk).fast_info
-            price = float(fi["last_price"]) if fi.get("last_price") else None
+            last_price = float(fi["last_price"]) if fi.get("last_price") else None
             prev = fi.get("previous_close")
-            change = float(price - prev) if (price is not None and prev) else None
+            change = float(last_price - prev) if (last_price is not None and prev) else None
             volume = int(fi["last_volume"]) if fi.get("last_volume") else None
-            if price is not None:
-                out[tk] = {"price": price, "change": change, "volume": volume}
+            if last_price is not None:
+                out[tk] = {"price": last_price, "change": change, "volume": volume}
         except Exception as exc:  # noqa: BLE001
             log.warning("cena pro %s nedostupná ani přes fast_info: %s", tk, exc)
 

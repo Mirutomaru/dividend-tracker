@@ -26,7 +26,8 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
     dps_ttm = snap.dps_ttm or 0.0
     if snap.price and snap.price > 0:
         m.yield_trailing_pct = round(dps_ttm / snap.price * 100.0, 3)
-        fwd = snap.forward_dividend_rate if (snap.forward_dividend_rate or 0) > 0 else dps_ttm
+        fwd_rate = snap.forward_dividend_rate
+        fwd = fwd_rate if (fwd_rate is not None and fwd_rate > 0) else dps_ttm
         m.yield_forward_pct = round(fwd / snap.price * 100.0, 3)
 
     reit = is_reit(snap.sector)
@@ -76,11 +77,11 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
     # ---------- B. Ocenění & valuace ---------------------------------------------
     if snap.eps_ttm and snap.eps_ttm > 0 and snap.price:
         m.pe_ttm = round(snap.price / snap.eps_ttm, 2)
-    elif (snap.pe_ttm_reported or 0) > 0:
+    elif snap.pe_ttm_reported is not None and snap.pe_ttm_reported > 0:
         m.pe_ttm = round(float(snap.pe_ttm_reported), 2)
     if snap.eps_forward and snap.eps_forward > 0 and snap.price:
         m.pe_forward = round(snap.price / snap.eps_forward, 2)
-    elif (snap.pe_forward_reported or 0) > 0:
+    elif snap.pe_forward_reported is not None and snap.pe_forward_reported > 0:
         m.pe_forward = round(float(snap.pe_forward_reported), 2)
 
     fcf_ps = _safe_div(snap.fcf_ttm, snap.shares_outstanding) if snap.fcf_ttm else None
@@ -90,7 +91,7 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
 
     if snap.enterprise_value and snap.ebitda and snap.ebitda > 0:
         m.ev_ebitda = round(snap.enterprise_value / snap.ebitda, 2)
-    elif (snap.ev_ebitda_reported or 0) > 0:
+    elif snap.ev_ebitda_reported is not None and snap.ev_ebitda_reported > 0:
         m.ev_ebitda = round(float(snap.ev_ebitda_reported), 2)
 
     # 5letý průměr dividendového výnosu: yield_y = DPS_y / závěrečná cena_y (max. 5 plných let)
@@ -101,9 +102,10 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
             yields_5y.append(d / p_end * 100.0)
     if len(yields_5y) >= 2:
         m.yield_5y_avg_pct = round(statistics.mean(yields_5y), 3)
-        if (m.yield_trailing_pct or 0) > 0 and m.yield_5y_avg_pct > 0:
+        trailing = m.yield_trailing_pct
+        if trailing is not None and trailing > 0 and m.yield_5y_avg_pct > 0:
             m.yield_vs_5y_deviation_pct = round(
-                (m.yield_trailing_pct / m.yield_5y_avg_pct - 1.0) * 100.0, 2
+                (trailing / m.yield_5y_avg_pct - 1.0) * 100.0, 2
             )
     else:
         m.notes.append("5Y avg yield: méně než 2 roky historických dat — srovnání není možné.")

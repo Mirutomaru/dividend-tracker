@@ -8,7 +8,7 @@ snížit skóre). Red safety flag omezuje skóre na ≤39, dividend trap na ≤2
 from __future__ import annotations
 
 import statistics
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from ..models import Benchmark, MetricsReport, ScoreBreakdown, ScoreResult, Snapshot
 from .sectors import is_reit, is_reit_like
@@ -48,7 +48,7 @@ def _higher_is_better(value: Optional[float], worst: float, best: float) -> Opti
     return _clip01((float(value) - worst) / (best - worst))
 
 
-def _block_score(items: List[Tuple[str, float, Optional[float]]]) -> Optional[float]:
+def _block_score(items: Sequence[Tuple[str, float, Optional[float]]]) -> Optional[float]:
     """Skóre bloku 0–100; None, pokud není žádná dostupná položka."""
     avail = [(w, s) for _, w, s in items if s is not None]
     total_w = sum(w for w, _ in avail)
@@ -188,9 +188,10 @@ def compute_score(
         ]
 
     # P/E vs referenční hodnoty (odvětvový medián + aprox. 5letý medián firmy); bereme nepříznivější
-    pe_refs = []
-    if bench and (bench.median_pe_ttm or 0) > 0:
-        pe_refs.append(bench.median_pe_ttm)
+    pe_refs: List[float] = []
+    bench_pe = bench.median_pe_ttm if bench else None
+    if bench_pe is not None and bench_pe > 0:
+        pe_refs.append(bench_pe)
     own_hist = [v for v in snap.pe_history_approx.values() if v and v > 0]
     if len(own_hist) >= 3:
         pe_refs.append(statistics.median(own_hist))
@@ -201,8 +202,9 @@ def compute_score(
             pe_score = _lower_is_better(max(ratios), 0.8, 1.3)
 
     ev_ratio = None
-    if m.ev_ebitda is not None and bench and (bench.median_ev_ebitda or 0) > 0:
-        ev_ratio = m.ev_ebitda / bench.median_ev_ebitda
+    bench_ev = bench.median_ev_ebitda if bench else None
+    if m.ev_ebitda is not None and bench_ev is not None and bench_ev > 0:
+        ev_ratio = m.ev_ebitda / bench_ev
 
     valuation = [
         ("yield_vs_5y_avg", 8, _higher_is_better(m.yield_vs_5y_deviation_pct, -20.0, 20.0)),
