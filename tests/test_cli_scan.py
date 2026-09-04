@@ -112,6 +112,18 @@ def test_scan_missing_file_error(monkeypatch, tmp_path, capsys):
     assert "neexistuje" in err
 
 
+def test_scan_unreadable_file_error(monkeypatch, tmp_path, capsys):
+    """--file na adresář (IsADirectoryError ⊂ OSError) → rc 2, ne traceback."""
+    _mock_analyze(monkeypatch, {})
+    d = tmp_path / "adresar"
+    d.mkdir()
+    rc = main(["scan", "--file", str(d)])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "Chyba při čtení souboru" in err
+
+
 # ------------------------------------------------------------------ fallback na watchlistu
 
 

@@ -588,7 +588,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not fpath.exists():
                 print(f"Soubor s tickerů neexistuje: {fpath}", file=sys.stderr)
                 return 2
-            scan_tickers = _read_tickers_from_file(fpath)
+            try:
+                scan_tickers = _read_tickers_from_file(fpath)
+            except OSError as exc:
+                print(f"Chyba při čtení souboru {fpath}: {exc}", file=sys.stderr)
+                return 2
         elif args.tickers:
             scan_tickers = [t.strip().upper() for t in args.tickers]
 
