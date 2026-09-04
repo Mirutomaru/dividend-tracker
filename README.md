@@ -11,6 +11,17 @@ posuzují jinak — udržitelnost měří FFO/AFFO cash coverage místo zkreslen
 > `yfinance`) a mohou být nepřesné nebo se opozdit. Vždy ověřte kritická čísla ve
 > výroční zprávě společnosti.
 
+## Quick Start — na jeden klik
+
+```bash
+cd /home/ai/Prace/projekty/dividend-tracker
+./start.sh          # první běh sám nainstaluje; otevře web GUI v prohlížeči
+```
+
+- Jiný port: `./start.sh --port 9000`
+- Řádkové příkazy: `./start.sh analyze KO JNJ`, `./start.sh sync`, `./start.sh scan`
+- Detailní návod k použití: [`NAVOD.md`](NAVOD.md)
+
 ## Funkce
 
 - Ruční výběr tickerů — jednoduché GUI (Tkinter) i CLI

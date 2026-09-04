@@ -9,34 +9,30 @@ Architekturu a detaily schémat nalezneš v `README.md`; tady je jen „co stisk
 
 ---
 
-## 1. Instalace a první spuštění
+## 1. Instalace a první spuštění — na jeden klik
+
+Celá aplikace se spouští jedním příkazem. Při prvním běhu se vše samo nainstaluje:
 
 ```bash
 cd /home/ai/Prace/projekty/dividend-tracker
-
-# jednou: vytvořit virtuální prostředí a nainstalovat balíček (včetně dev nástrojů)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-# GUI vyžaduje Tk (Debian/Ubuntu):
-sudo apt install python3-tk
+./start.sh
 ```
 
-Po instalaci jsou k dispozici tři způsoby spuštění:
+Hotovo — web GUI se otevře v prohlížeči na `http://127.0.0.1:8742`.
+Ukončíš Ctrl+C.
 
-| Způsob | Příkaz | Co to je |
-|---|---|---|
-| CLI | `divtrack` | hlavní řádkový nástroj (vše) |
-| Tkinter GUI | `divtrack-gui` | desktopová aplikace s okny |
-| Webové GUI | `divtrack web` | moderní web v prohlížeči |
+Co `./start.sh` dělá:
+- **první běh**: sám vytvoří virtuální prostředí a nainstaluje závislosti (stačí mít `python3`)
+- **další běhy**: rovnou spustí web GUI
+- **jiný port**: `./start.sh --port 9000`
+- **řádkové příkazy**: cokoliv dalšího se předá nástroji `divtrack`, např.
+  `./start.sh analyze KO JNJ`, `./start.sh sync`, `./start.sh scan`
 
-Kdykoli si nejseš jistý, co příkaz umí:
+Jediná volitelná závislost: desktop GUI (`divtrack-gui`) vyžaduje Tk —
+`sudo apt install python3-tk`. Webové GUI a CLI fungují bez něj plně.
 
-```bash
-divtrack --help                 # přehled všech subkomandů
-divtrack <subkomand> --help     # detail konkrétního subkomandu (např. divtrack scan --help)
-```
+> Pro vývojáře (testy, linter): `pip install -e ".[dev]"` ve venv `.venv`,
+> nebo ručně: `./install.sh && .venv/bin/pip install -e ".[dev]"`.
 
 ---
 
@@ -202,7 +198,8 @@ ale funkční. Klíč je volitelný.
 
 ### Webové GUI (doporučeno)
 
-Moderní, čisté web v prohlížeči — pracuje i přímo z lokální databáze.
+Moderní, čistý web v prohlížeči — pracuje i přímo z lokální databáze.
+Nejjednodušší cesta: `./start.sh` (viz sekce 1). Ručně:
 
 ```bash
 divtrack web                    # spustí na http://127.0.0.1:8742
