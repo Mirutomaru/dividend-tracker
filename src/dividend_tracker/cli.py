@@ -215,6 +215,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                     f"Ceny aktualizovány: {quotes.get('updated', 0)} ticker(ů)"
                     + (f", selhaly: {quotes['failed']}" if quotes.get("failed") else "")
                 )
+
+            # Srovnávací tabulka z lokální DB — hrubý i čistý yield po srážkové dani.
+            from .data.watchlist import build_watchlist_rows
+            from .presentation.console import format_watchlist_table
+
+            rows = build_watchlist_rows(db)
+            if rows:
+                print()
+                print(format_watchlist_table(rows))
         finally:
             db.close()
         return 0

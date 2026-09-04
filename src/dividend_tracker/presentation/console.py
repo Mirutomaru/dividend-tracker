@@ -183,3 +183,44 @@ def format_summary_table(reports: List[Dict[str, Any]], color: bool = True) -> s
                     pass
         out.append(line(cells))
     return "\n".join(out)
+
+
+def format_watchlist_table(rows: List[Dict[str, Any]]) -> str:
+    """Srovnávací tabulka watchlisty z lokální DB (bez externích volání).
+
+    Sloupec YIELD ukazuje hrubý i čistý yield po srážkové dani podle země
+    původu emitenta (``hrubý → čistý``); je-li sazba neznámá nebo nulová,
+    zobrazí se jen hrubý. Řádky pochází z ``build_watchlist_rows()``.
+    """
+    if not rows:
+        return "(watchlista je prázdná)"
+
+    def row(r: Dict[str, Any]) -> List[str]:
+        gross = r.get("yield_pct")
+        net = r.get("net_yield_pct")
+        # Sazba neznámá/nulová → net == hrubý, duplicitní sloupec nemá smysl.
+        if net is None or gross is None or abs(net - gross) < 0.005:
+            yield_cell = fmt(gross, 2, "%")
+        else:
+            yield_cell = f"{fmt(gross, 2, '%')} → {fmt(net, 2, '%')}"
+        streak = r.get("streak_years")
+        return [
+            r["ticker"],
+            fmt(r.get("price"), 2),
+            yield_cell,
+            str(streak) if streak is not None else "—",
+            r.get("next_ex_date") or "—",
+        ]
+
+    headers = ["TICKER", "CENA", "YIELD (hrubý → čistý)", "STREAK", "PŘÍŠTÍ VÝPLATA"]
+    rows_out = [row(r) for r in rows]
+
+    widths = [max(len(headers[i]), *(len(r[i]) for r in rows_out)) for i in range(len(headers))]
+    sep = "  "
+
+    def line(cells: List[str]) -> str:
+        return sep.join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
+
+    out = [line(headers), line(["-" * w for w in widths])]
+    out.extend(line(cells) for cells in rows_out)
+    return "\n".join(out)
