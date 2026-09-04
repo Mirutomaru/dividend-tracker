@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 
-from dividend_tracker.domain.valuation import compute_fair_value
-from dividend_tracker.models import MetricsReport, Snapshot
 from tests.conftest import make_snapshot
+
+from dividend_tracker.domain.valuation import compute_fair_value, two_stage_ddm_price
+from dividend_tracker.models import MetricsReport
 
 
 def _metrics(**kw) -> MetricsReport:
@@ -71,3 +72,68 @@ def test_no_dividend_returns_unknown():
     fv = compute_fair_value(snap, _metrics(), required_return_pct=8.0)
     assert fv.verdict == "unknown"
     assert fv.gordon_price is None and fv.fair_value is None
+
+
+# ---------- two_stage_ddm_price (čistá funkce) ------------------------------------
+
+
+def test_two_stage_known_values():
+    """Ruční výpočet: P = Σ D_t/(1+r)^t + [D_{n+1}/(r−g_t)]/(1+r)^n."""
+    price = two_stage_ddm_price(dps=3.0, g1_pct=15.0, r_pct=5.0)
+    assert price is not None
+    expected = sum(3.0 * 1.15 ** t / 1.05 ** t for t in range(1, 6)) \
+        + (3.0 * 1.15 ** 5 * 1.03 / (0.05 - 0.03)) / 1.05 ** 5
+    assert math.isclose(price, expected, rel_tol=1e-9)
+
+
+def test_two_stage_default_terminal_growth_half_of_g1_capped_3():
+    """Výchozí terminální růst = min(max(g1/2, 0), 3 %)."""
+    # g1 = 8 % → gt = min(4, 3) = 3 % (strop se projeví)
+    price = two_stage_ddm_price(dps=3.0, g1_pct=8.0, r_pct=6.0)
+    assert price is not None
+    expected = sum(3.0 * 1.08 ** t / 1.06 ** t for t in range(1, 6)) \
+        + (3.0 * 1.08 ** 5 * 1.03 / (0.06 - 0.03)) / 1.06 ** 5
+    assert math.isclose(price, expected, rel_tol=1e-9)
+
+
+def test_two_stage_negative_growth_terminal_floored_at_zero():
+    """Klesající dividenda: terminální růst se ořízne na spodní hranici 0 %."""
+    price = two_stage_ddm_price(dps=3.0, g1_pct=-5.0, r_pct=6.0)
+    assert price is not None
+    expected = sum(3.0 * 0.95 ** t / 1.06 ** t for t in range(1, 6)) \
+        + (3.0 * 0.95 ** 5 / 0.06) / 1.06 ** 5
+    assert math.isclose(price, expected, rel_tol=1e-9)
+
+
+def test_two_stage_zero_growth_equals_level_dps_model():
+    """g1 = 0 % a gt = 0 % → konstantní DPS: P = Σ D/(1+r)^t + (D/r)/(1+r)^n."""
+    price = two_stage_ddm_price(dps=3.0, g1_pct=0.0, r_pct=8.0)
+    assert price is not None
+    expected = sum(3.0 / 1.08 ** t for t in range(1, 6)) + (3.0 / 0.08) / 1.08 ** 5
+    assert math.isclose(price, expected, rel_tol=1e-9)
+
+
+def test_two_stage_explicit_terminal_growth_and_horizon():
+    """Explicitní terminální růst a kratší horizont (n = 3)."""
+    price = two_stage_ddm_price(dps=2.0, g1_pct=10.0, r_pct=7.0, n_years=3, terminal_growth_pct=2.0)
+    assert price is not None
+    expected = sum(2.0 * 1.10 ** t / 1.07 ** t for t in range(1, 4)) \
+        + (2.0 * 1.10 ** 3 * 1.02 / (0.07 - 0.02)) / 1.07 ** 3
+    assert math.isclose(price, expected, rel_tol=1e-9)
+
+
+def test_two_stage_returns_none_when_r_le_terminal_growth():
+    """r ≤ g_t → terminální hodnota diverguje → None (čistá funkce bez ořezávání)."""
+    assert two_stage_ddm_price(3.0, 10.0, 7.0, terminal_growth_pct=8.0) is None   # r < gt
+    assert two_stage_ddm_price(3.0, 10.0, 6.0, terminal_growth_pct=6.0) is None   # r == gt
+
+
+def test_two_stage_invalid_inputs_return_none():
+    """Neplatné vstupy (DPS ≤ 0/None, r ≤ 0/None, n < 1) → None."""
+    assert two_stage_ddm_price(0.0, 5.0, 8.0) is None
+    assert two_stage_ddm_price(None, 5.0, 8.0) is None
+    assert two_stage_ddm_price(-1.0, 5.0, 8.0) is None
+    assert two_stage_ddm_price(3.0, 5.0, 0.0) is None
+    assert two_stage_ddm_price(3.0, 5.0, -2.0) is None
+    assert two_stage_ddm_price(3.0, 5.0, None) is None
+    assert two_stage_ddm_price(3.0, 5.0, 8.0, n_years=0) is None
