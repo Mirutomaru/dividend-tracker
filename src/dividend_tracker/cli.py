@@ -35,9 +35,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         prog="divtrack",
         description="Dividend Tracker — tracking, skórování a valuační analýza dividendových akcií.",
     )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="podrobnější logování (INFO: cache hit/miss, retry)",
+    )
     sub = parser.add_subparsers(dest="cmd")
 
-    p_an = sub.add_parser("analyze", help="analyzovat jeden nebo více tickerů")
+    # --verbose/-v dostupné i za subkomandem (divtrack analyze KO --verbose).
+    # SUPPRESS: pokud se flag za subkomandem nepředá, nepřepíše hodnotu z hlavního parseru.
+    _common = argparse.ArgumentParser(add_help=False)
+    _common.add_argument(
+        "--verbose", "-v", action="store_true", default=argparse.SUPPRESS,
+        help="podrobnější logování (INFO: cache hit/miss, retry)",
+    )
+
+    p_an = sub.add_parser("analyze", parents=[_common], help="analyzovat jeden nebo více tickerů")
     p_an.add_argument("tickers", nargs="+", help="ticker(y), např. KO JNJ MSFT")
     p_an.add_argument("--json", metavar="FILE", help="export reportu do JSON souboru")
     p_an.add_argument(
@@ -45,6 +57,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="požadovaná výkonnost pro Gordon model v %% (výchozí 8)",
     )
     p_an.add_argument("--no-benchmark", action="store_true", help="přeskočit odvětvový benchmark")
+    p_an.add_argument(
+        "--refresh", action="store_true",
+        help="ignorovat disk cache snapshotů (TTL 1 den) a stáhnout data znovu",
+    )
 
     sub.add_parser("gui", help="spustit Tkinter GUI aplikaci")
 
@@ -114,7 +130,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_al.add_argument("--id", dest="alert_id", type=int, default=None, help="ID upozornění (remove)")
     p_al.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
 
-    p_ex = sub.add_parser("export", help="CSV export — watchlist z DB nebo hloubková analýza")
+    p_ex = sub.add_parser("export", parents=[_common], help="CSV export — watchlist z DB nebo hloubková analýza")
     p_ex.add_argument(
         "action", choices=["watchlist", "analysis"],
         help="watchlist = srovnávací řádky přímo z DB (offline); analysis = hloubkové reporty tickerů",
@@ -122,6 +138,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_ex.add_argument("tickers", nargs="*", help="pro analysis: ticker(y) k analýze")
     p_ex.add_argument("--file", metavar="PATH", default=None, help="výstupní CSV soubor (výchozí watchlist.csv / analysis.csv)")
     p_ex.add_argument("--db", metavar="PATH", default=None, help="cesta k databázi")
+    p_ex.add_argument(
+        "--refresh", action="store_true",
+        help="pro analysis: ignorovat disk cache snapshotů (TTL 1 den) a stáhnout data znovu",
+    )
 
     p_cfg = sub.add_parser("config", help="zobrazit/nastavit konfiguraci (.env)")
     p_cfg.add_argument(
@@ -132,7 +152,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parser.parse_args(_preprocess(argv if argv is not None else sys.argv[1:]))
 
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    # --verbose → INFO (cache hit/miss, retry); výchozí WARNING
+    logging.basicConfig(
+        level=logging.INFO if getattr(args, "verbose", False) else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
 
     if args.cmd == "gui":
         try:
@@ -451,7 +475,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             for i, tk in enumerate(tickers, 1):
                 print(f"[{i}/{len(tickers)}] Analyzuji {tk} …")
                 try:
-                    reports.append(analyze_ticker(tk))
+                    reports.append(analyze_ticker(tk, refresh=args.refresh))
                 except DataFetchError as exc:
                     n_errors += 1
                     print(f"  ✗ Nedostupná data: {exc}", file=sys.stderr)
@@ -521,7 +545,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     for i, tk in enumerate(tickers, 1):
         print(f"\n[{i}/{len(tickers)}] Analyzuji {tk} …")
         try:
-            rep = analyze_ticker(tk, required_return_pct=args.required_return, use_benchmark=not args.no_benchmark)
+            rep = analyze_ticker(
+                tk,
+                required_return_pct=args.required_return,
+                use_benchmark=not args.no_benchmark,
+                refresh=args.refresh,
+            )
             reports.append(rep)
         except DataFetchError as exc:
             n_errors += 1

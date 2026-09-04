@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import statistics
 import time
@@ -26,6 +27,8 @@ log = logging.getLogger(__name__)
 
 CACHE_DIR = Path(os.environ.get("DIVTRACK_CACHE", "~/.cache/dividend-tracker")).expanduser()
 PEER_TTL_DAYS = 7
+SNAPSHOT_TTL_DAYS = 1          # disk cache snapshotů — TTL 1 den (divtrack analyze --refresh bypass)
+MAX_WORKERS = 3                # paralelní stahování nezávislých endpointů yfinance za ticker
 
 
 class DataFetchError(RuntimeError):
@@ -82,7 +85,22 @@ def resolve_fcf(fcf_direct: Optional[float], ocf: Optional[float], capex_signed:
     return None
 
 
-def _retry(fn: Callable[[], Any], attempts: int = 2, delay: float = 1.5) -> Any:
+def _is_rate_limited(exc: Exception) -> bool:
+    """Rozpozná omezení frekvence providera (429 / Too Many Requests) — delší pauza."""
+    msg = str(exc).lower()
+    if "429" in msg or "too many requests" in msg or "rate limit" in msg:
+        return True
+    # yfinance vrhá YFRateLimitError; neimportujeme ho tu (vyhnutí tvrdé závislosti)
+    cls = type(exc).__name__.lower()
+    return "ratelimit" in cls or "rate_limit" in cls
+
+
+def _retry(fn: Callable[[], Any], attempts: int = 3, delay: float = 1.5) -> Any:
+    """Opakuje volání s exponenciálním backoffem + jitterem; rate-limit (429) čeká déle.
+
+    ``delay`` je základ — každý další pokus ho zdvojnásobí (1,5s → 3s → 6s …), navíc se
+    přidá náhodný jitter (0–50 %), aby paralelní workeri nedorazili do providera synchronně.
+    """
     last_exc: Optional[Exception] = None
     for i in range(attempts):
         try:
@@ -90,9 +108,51 @@ def _retry(fn: Callable[[], Any], attempts: int = 2, delay: float = 1.5) -> Any:
         except Exception as exc:  # noqa: BLE001 — provider vrhá různé typy (429, JSON, timeout)
             last_exc = exc
             if i < attempts - 1:
-                log.warning("retry %d/%d po chybě: %s", i + 1, attempts - 1, exc)
-                time.sleep(delay * (i + 1))
+                base = delay * (2 ** i)
+                wait = base + random.uniform(0, base / 2)
+                if _is_rate_limited(exc):
+                    wait *= 2  # rate-limit → dvojnásobná pauza
+                log.warning("retry %d/%d po chybě: %s (čekám %.1fs)", i + 1, attempts - 1, exc, wait)
+                time.sleep(wait)
     raise DataFetchError(str(last_exc)) from last_exc
+
+
+def _fetch_independent(tk: str) -> dict[str, Any]:
+    """Stáhne 6 vzájemně nezávislých endpointů yfinance paralelně (ThreadPoolExecutor).
+
+    Každý endpoint je izolovaný — selhání jednoho vrátí ``None`` a zaloguje se, nezahyne
+    celá dávka. Vrací dict s klíči dividends/splits/history/income_stmt/balance_sheet/cashflow.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    import yfinance as yf
+
+    names = ["dividends", "splits", "history", "income_stmt", "balance_sheet", "cashflow"]
+
+    def _one(name: str) -> Any:
+        t = yf.Ticker(tk)  # čerstvá instance na vlákno — žádný sdílený stav mezi workeri
+        if name == "dividends":
+            return t.dividends
+        if name == "splits":
+            return t.splits
+        if name == "history":
+            return t.history(period="6y", interval="1d")
+        if name == "income_stmt":
+            return t.income_stmt
+        if name == "balance_sheet":
+            return t.balance_sheet
+        return t.cashflow
+
+    out: dict[str, Any] = {k: None for k in names}
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {pool.submit(_one, n): n for n in names}
+        for fut in as_completed(futures):
+            name = futures[fut]
+            try:
+                out[name] = fut.result()
+            except Exception as exc:  # noqa: BLE001 — jeden mrtvý endpoint nezahyne celá dávka
+                log.warning("%s: chyba při sběru %s (%s)", tk, name, exc)
+    return out
 
 
 def _year_end_prices(hist: Optional[pd.DataFrame]) -> dict[int, float]:
@@ -106,11 +166,22 @@ def _year_end_prices(hist: Optional[pd.DataFrame]) -> dict[int, float]:
     return {int(y): round(float(p), 4) for y, p in out.items() if pd.notna(p)}
 
 
-def build_snapshot(ticker: str) -> Snapshot:
-    """Sestaví kompletní :class:`Snapshot` pro ticker (jedno volání na výkaz)."""
+def build_snapshot(ticker: str, refresh: bool = False) -> Snapshot:
+    """Sestaví kompletní :class:`Snapshot` pro ticker (paralelní stahování endpointů).
+
+    Pokud ``refresh`` je false a v disk cache je čerstvý snapshot (TTL 1 den), vrátí ho bez
+    jediného síťového volání. Jinak stáhne data znovu (6 nezávislých endpointů paralelně)
+    a výsledek uloží do cache.
+    """
+    tk = ticker.strip().upper()
+
+    if not refresh:
+        cached = load_cached_snapshot(tk)
+        if cached is not None:
+            return cached
+
     import yfinance as yf
 
-    tk = ticker.strip().upper()
     t = yf.Ticker(tk)
     gaps: list[str] = []
 
@@ -140,19 +211,21 @@ def build_snapshot(ticker: str) -> Snapshot:
         ev_ebitda_reported=_to_float(info.get("enterpriseToEbitda")),
     )
 
-    # ---- dividendová historie -----------------------------------------------------
-    try:
-        div_series = t.dividends
-    except Exception as exc:  # noqa: BLE001
-        log.warning("%s: chyba při sběru dividend (%s)", tk, exc)
-        div_series = None
+    # ---- 6 nezávislých endpointů paralelně (ThreadPoolExecutor) -------------------
+    data = _fetch_independent(tk)
+    div_series = data["dividends"]
+    splits = data["splits"]
+    hist = data["history"]
+    income_stmt = data["income_stmt"]
+    balance_sheet = data["balance_sheet"]
+    cashflow = data["cashflow"]
+
     from ..domain.dividends import aggregate_dividends, split_adjust_dividends
 
     # Historické DPS škálujeme na aktuální počet akcií (splity po dané výplatě),
     # jinak by CAGR a yield vs. 5Y průměr u firem se splity nedávaly smysl.
     if div_series is not None and len(div_series):
         try:
-            splits = t.splits
             div_series = split_adjust_dividends(div_series, splits)
         except Exception as exc:  # noqa: BLE001 — bez splitů pokračujeme s neupravenou historií
             log.warning("%s: splity nedostupné (%s), dividendní historie není split-adjusted", tk, exc)
@@ -164,34 +237,13 @@ def build_snapshot(ticker: str) -> Snapshot:
     snap.dps_ttm = dps_ttm if dps_ttm else 0.0
 
     # ---- denní historie (5–6 let) pro year-end ceny ---------------------------------
-    try:
-        hist = t.history(period="6y", interval="1d")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("%s: chyba při sběru historii cen (%s)", tk, exc)
-        hist = None
     snap.fiscal_year_prices = _year_end_prices(hist)
     if eps_ttm and eps_ttm > 0:
         snap.pe_history_approx = {
             y: round(p / eps_ttm, 2) for y, p in snap.fiscal_year_prices.items() if p and p > 0
         }
 
-    # ---- roční výkazy ---------------------------------------------------------------
-    try:
-        income_stmt = t.income_stmt
-    except Exception as exc:  # noqa: BLE001
-        log.warning("%s: chyba při sběru income statement (%s)", tk, exc)
-        income_stmt = None
-    try:
-        balance_sheet = t.balance_sheet
-    except Exception as exc:  # noqa: BLE001
-        log.warning("%s: chyba při sběru balance sheet (%s)", tk, exc)
-        balance_sheet = None
-    try:
-        cashflow = t.cashflow
-    except Exception as exc:  # noqa: BLE001
-        log.warning("%s: chyba při sběru cash flow statement (%s)", tk, exc)
-        cashflow = None
-
+    # ---- roční výkazy (již stažené paralelně) ---------------------------------------
     snap.ebitda = _pick(income_stmt, "EBITDA")
     snap.ebit = _pick(income_stmt, "Operating Income", "EBIT")
     snap.interest_expense = _pick(income_stmt, "Interest Expense", "Interest Expense - Non Operating")
@@ -259,6 +311,7 @@ def build_snapshot(ticker: str) -> Snapshot:
     if price is None:
         raise DataFetchError(f"{tk}: aktuální cena nedostupná.")
 
+    save_snapshot_cache(snap)  # TTL 1 den — další spuštění bez --refresh čte z disk cache
     return snap
 
 
@@ -267,6 +320,45 @@ def build_snapshot(ticker: str) -> Snapshot:
 def _cache_path(name: str) -> Path:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return CACHE_DIR / f"{re.sub(r'[^a-z0-9]+', '_', name.lower())}.json"
+
+
+# ------------------- disk cache snapshotů (TTL 1 den) ---------------------------
+
+def _snapshot_cache_path(ticker: str) -> Path:
+    return _cache_path(f"snap_{ticker.strip().upper()}")
+
+
+def load_cached_snapshot(ticker: str, ttl_days: float = SNAPSHOT_TTL_DAYS) -> Optional[Snapshot]:
+    """Vrátí snapshot z disk cache, pokud je čerstvý (mladší než ``ttl_days``).
+
+    Poškozená / stará cache se tichounce ignoruje a vrátí ``None`` — volající pak stáhne
+    data znovu. Žádné výjimky ven.
+    """
+    path = _snapshot_cache_path(ticker)
+    if not path.exists():
+        return None
+    try:
+        cached = json.loads(path.read_text())
+        age_days = (datetime.now(timezone.utc).timestamp() - cached["ts"]) / 86400.0
+        if age_days > ttl_days:
+            log.debug("snapshot cache %s je stará (%.1f d) — ignoruji", ticker, age_days)
+            return None
+        snap = Snapshot(**cached["data"])
+        log.info("%s: snapshot z disk cache (věk %.2f d)", ticker, age_days)
+        return snap
+    except Exception as exc:  # noqa: BLE001 — poškozená cache → přegenerovat
+        log.debug("snapshot cache %s nepoužitelná (%s)", ticker, exc)
+        return None
+
+
+def save_snapshot_cache(snap: Snapshot) -> None:
+    """Uloží snapshot do disk cache (TTL 1 den). Chyba zápisu jen zaloguje — nebrání analýze."""
+    try:
+        path = _snapshot_cache_path(snap.ticker)
+        payload = {"ts": datetime.now(timezone.utc).timestamp(), "data": snap.model_dump()}
+        path.write_text(json.dumps(payload, indent=1))
+    except OSError as exc:
+        log.warning("nelze zapsat snapshot cache %s: %s", snap.ticker, exc)
 
 
 def get_sector_benchmark(sector: Optional[str], force_refresh: bool = False) -> Optional[Benchmark]:
@@ -320,4 +412,11 @@ def get_sector_benchmark(sector: Optional[str], force_refresh: bool = False) -> 
     return data
 
 
-__all__ = ["DataFetchError", "build_snapshot", "get_sector_benchmark", "resolve_fcf"]
+__all__ = [
+    "DataFetchError",
+    "build_snapshot",
+    "get_sector_benchmark",
+    "load_cached_snapshot",
+    "resolve_fcf",
+    "save_snapshot_cache",
+]

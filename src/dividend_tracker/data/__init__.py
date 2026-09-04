@@ -9,7 +9,13 @@
 
 from .alerts import VALID_CONDITIONS, add_alert, evaluate_alerts
 from .db import Database
-from .fetcher import DataFetchError, build_snapshot, get_sector_benchmark
+from .fetcher import (
+    DataFetchError,
+    build_snapshot,
+    get_sector_benchmark,
+    load_cached_snapshot,
+    save_snapshot_cache,
+)
 from .fmp import DAILY_LIMIT, FMPCacheClient, FMPError, FMPLimitExceeded, get_api_key
 from .portfolio import build_income_target_report, build_portfolio_report
 from .quotes import fetch_quotes, sync_quotes
@@ -50,6 +56,8 @@ __all__ = [
     "get_api_key",
     "get_sector_benchmark",
     "import_watchlist_file",
+    "load_cached_snapshot",
+    "save_snapshot_cache",
     "sync_all",
     "sync_fundamentals",
     "sync_quotes",
