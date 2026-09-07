@@ -171,6 +171,11 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
 
+### 2026-09-07 — Ukliděno na další práci + odstraněna duplicita nočního syncu
+- **Duplicitní crontab**: user `crontab` měl vlastní záznam `divtrack sync` na 02:30, který se překrýval s Hermes cron jobem `divtrack-nightly-sync` (stejný čas) → zítra by se sync spustil dvakrát (dvojnásobné API volání + závod na SQLite). User crontab obsahoval jen tuhle řádku, takže nahrazen komentářem; kanonický je Hermes cron job (má doručení zprávy + ošetření chyb).
+- **Noční sync dnes v 02:31 selhal** „Script not found“ — skript `divtrack_nightly_sync.sh` byl vytvořen až 14:19, tedy po běhu. Dnes v noci už poběží (skript existuje, syntaxe OK).
+- **Stav na odchozí**: git čistý na `main`, web server běží na aktuálním kódu (`/api/health` ok), Tiingo klíč nastaven (1/10000 volání), 314 testů zelených, ruff + mypy clean. Původní backlog 8/8 hotový, nové kandidáty 9–11.
+
 ### 2026-09-07 — UP (pyupgrade) ruff pravidla (backlog bod 8 hotovo)
 - **Motivace**: příznak byl záměrně vypnutý „~400 mechanických modernizací jako samostatný commit“; po dokončení ostatních backlog bodů na něj přišlo.
 - **Změny** (515 ve 26 souborech, čistě mechanické): `Optional[X]` → `X | None` (UP045/UP007), `List/Dict/Tuple/Set` → `list/dict/tuple/set` (UP006), `Iterator` přesunut z `typing` do `collections.abc` (UP037), vyčištěny nevyužité typing importy (F401) a opraveno řazení importů (I001).
