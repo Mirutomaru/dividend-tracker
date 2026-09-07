@@ -743,3 +743,110 @@ def test_income_target_invalid(server):
     # záporné amount → 400
     status, body = _request(server, "POST", "/api/income-target", {"amount": -1})
     assert status == 400 and "error" in body
+
+
+# ------------------------------------------------------------------ scan (nákupní příležitosti)
+
+def _fake_scan_report(ticker: str, *, green: bool = True, buy_zone: bool = False, price: float = 40.0):
+    """Vytvoří report s požadovaným safety flagem a signálem BUY_ZONE."""
+    return {
+        "schema_version": "1.0",
+        "ticker": ticker,
+        "price_current": price,
+        "currency": "USD",
+        "company": {"name": f"Fake {ticker}", "sector": "Consumer Defensive"},
+        "metrics": {"dividend": {"yield_trailing_pct": 5.0}},
+        "score": {
+            "applicable": True,
+            "total_0_100": 80 if green else 40,
+            "safety_flag": "green" if green else "red",
+            "signals": ["BUY_ZONE_UNDERVALUED"] if buy_zone else [],
+        },
+        "fair_value": {
+            "fair_value": price * 1.2,
+            "buy_zone_low": price * 0.9,
+            "buy_zone_high": price * 1.1,
+        },
+    }
+
+
+def _wait_matches(server: str, job_id: str, timeout: float = 5.0) -> dict:
+    """Počká, až server doplní ``matches`` (počítají se až po dokončení všech analýz)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        status, job = _request(server, "GET", f"/api/jobs/{job_id}")
+        assert status == 200
+        if job.get("matches") is not None:
+            return job
+        time.sleep(0.05)
+    raise AssertionError("matches se nedoplnily v časovém limitu")
+
+
+def test_scan_flow_with_mocked_pipeline(monkeypatch, server):
+    """POST /api/scan → job; matches = jen zelený flag + BUY_ZONE (jako CLI)."""
+    from dividend_tracker import web as web_pkg
+
+    def fake_analyze(ticker, required_return_pct=8.0, use_benchmark=True):
+        if ticker == "KO":
+            return _fake_scan_report("KO", green=True, buy_zone=True)      # → match
+        if ticker == "JNJ":
+            return _fake_scan_report("JNJ", green=True, buy_zone=False)    # zelený, ale bez BUY_ZONE
+        return _fake_scan_report(ticker, green=False, buy_zone=True)       # BUY_ZONE, ale červený
+
+    monkeypatch.setattr(web_pkg.server, "analyze_ticker", fake_analyze)
+
+    status, body = _request(server, "POST", "/api/scan", {"tickers": ["KO", "JNJ", "MSFT"]})
+    assert status == 202 and "job_id" in body
+    job = _wait_job(server, body["job_id"])
+    assert job["status"] == "done" and job["total"] == 3
+
+    job = _wait_matches(server, body["job_id"])
+    assert job["matches"] == ["KO"]
+
+
+def test_scan_defaults_to_watchlist(monkeypatch, scan_server):
+    """Bez 'tickers' se skenuje celá trvalá watchlista (jako CLI)."""
+    from dividend_tracker import web as web_pkg
+
+    seen = []
+
+    def fake_analyze(ticker, **kw):
+        seen.append(ticker)
+        return _fake_scan_report(ticker, green=True, buy_zone=False)
+
+    monkeypatch.setattr(web_pkg.server, "analyze_ticker", fake_analyze)
+
+    status, body = _request(scan_server, "POST", "/api/scan", {})
+    assert status == 202 and "job_id" in body
+    job = _wait_job(scan_server, body["job_id"])
+    assert job["total"] == 2
+    assert {r["ticker"] for r in job["results"]} == {"KO", "JNJ"}
+
+
+def test_scan_empty_watchlist_400(server):
+    """Prázdná watchlista + bez explicitních tickerů → 400."""
+    status, body = _request(server, "POST", "/api/scan", {})
+    assert status == 400 and "error" in body
+
+
+def test_scan_invalid_ticker_400(server):
+    status, body = _request(server, "POST", "/api/scan", {"tickers": ["!!"]})
+    assert status == 400 and "error" in body
+
+
+@pytest.fixture()
+def scan_server(tmp_path):
+    """Server s trvalou watchlistou (KO, JNJ) pro testy /api/scan."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "scan.db")
+    for tk in ("KO", "JNJ"):
+        db.upsert_stock(tk, name=tk, currency="USD", sector="Consumer Defensive")
+        db.upsert_watchlist(tk)
+    httpd = create_app(port=0, db_path=db.path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    yield f"http://{host}:{port}"
+    httpd.shutdown()
+    httpd.server_close()

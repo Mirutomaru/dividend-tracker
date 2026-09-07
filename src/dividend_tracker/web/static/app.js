@@ -22,6 +22,10 @@ const watchlistSection = $("#watchlist-section");
 const watchlistBody = $("#watchlist-body");
 const watchlistCount = $("#watchlist-count");
 const syncBtn = $("#sync-btn");
+const scanBtn = $("#scan-btn");
+const scanSection = $("#scan-section");
+const scanResults = $("#scan-results");
+const scanCount = $("#scan-count");
 const fmpBar = $("#fmp-bar");
 const fmpStatusText = $("#fmp-status-text");
 const refreshFmpBtn = $("#refresh-fmp-btn");
@@ -724,6 +728,100 @@ function pollSyncJob(jobId, total) {
   }, 2000);
 }
 
+/* ------------------------------ scan — nákupní příležitosti ------------------------------ */
+
+async function startScan(tickers) {
+  setBusy(true);
+  progressEl.classList.remove("hidden");
+  const scope = tickers.length ? `${tickers.length} ticker(ů)` : "celou trvalou watchlistu";
+  progressTitle.textContent = `Skenuji ${scope}…`;
+  progressSub.textContent = "Hledám akce se zeleným safety flagem a signálem BUY_ZONE (jako divtrack scan).";
+
+  try {
+    const res = await fetch("/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tickers.length ? { tickers } : {}),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
+    const { job_id } = await res.json();
+    pollScanJob(job_id);
+  } catch (err) {
+    showError(`Scan se nepodařilo spustit: ${err.message}`);
+  }
+}
+
+function pollScanJob(jobId) {
+  if (pollTimer) clearInterval(pollTimer);
+  const rendered = new Set();
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const job = await res.json();
+
+      // Detailní karty — postupně, jen nové položky (stejně jako analýza).
+      for (const entry of job.results) {
+        if (rendered.has(entry.ticker)) continue;
+        rendered.add(entry.ticker);
+        if (!entry.error && !document.getElementById(`card-${entry.ticker}`)) {
+          resultsEl.insertAdjacentHTML("beforeend", `<div id="card-${entry.ticker}">${renderTickerCard(entry)}</div>`);
+          animateRing(document.querySelector(`#card-${entry.ticker} .ring-fg`));
+        }
+      }
+
+      progressTitle.textContent = `Skenuji… (${job.done}/${job.total})`;
+
+      // Hotovo až po doplnění matches (server je počítá až po dokončení všech analýz).
+      if (job.status === "done" && job.matches !== undefined) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        progressEl.classList.add("hidden");
+        setBusy(false);
+        renderScanResults(job);
+      }
+    } catch {
+      /* dočasná chyba sítě — zkusit znovu při dalším ticku */
+    }
+  }, 1500);
+}
+
+function renderScanResults(job) {
+  const matches = job.matches || [];
+  scanSection.classList.remove("hidden");
+  if (!matches.length) {
+    scanCount.textContent = "";
+    scanResults.innerHTML = `<p class="scan-empty">Žádná akce ze ${job.total} analyzovaných nesplňuje zelený flag + BUY_ZONE.</p>`;
+    return;
+  }
+  scanCount.textContent = `${matches.length} z ${job.total}`;
+  const byTicker = new Map(job.results.filter((e) => e.report).map((e) => [e.ticker, e]));
+  scanResults.innerHTML = matches.map((t) => {
+    const entry = byTicker.get(t);
+    if (!entry) return "";
+    const r = entry.report;
+    const d = (r.metrics || {}).dividend || {};
+    const fv = r.fair_value || {};
+    const price = r.price_current;
+    let distCell = "—";
+    if (price != null && fv.buy_zone_high != null) {
+      const distPct = ((price - fv.buy_zone_high) / price) * 100;
+      distCell = distPct <= 0 ? `<span class="badge badge-green">v zóně</span>` : `−${distPct.toFixed(1)} %`;
+    }
+    const zone = fv.buy_zone_low != null && fv.buy_zone_high != null
+      ? `${fmtMoney(fv.buy_zone_low, r.currency)}–${fmtMoney(fv.buy_zone_high, r.currency)}`
+      : "—";
+    return `<div class="scan-row" data-ticker="${escapeHtml(t)}">
+      <span class="td-ticker">${escapeHtml(t)}</span>
+      <span>${fmtMoney(price, r.currency)}</span>
+      <span>${fmtPct(d.yield_trailing_pct)}</span>
+      <span>${fmtMoney(fv.fair_value, r.currency)}</span>
+      <span>${zone}</span>
+      ${distCell}
+    </div>`;
+  }).join("");
+}
+
 /* ------------------------------ renderování karet ------------------------------ */
 
 function tile(label, value, sub = "", cls = "") {
@@ -1011,6 +1109,8 @@ function showError(msg) {
 function setBusy(busy) {
   btn.disabled = busy;
   input.disabled = busy;
+  syncBtn.disabled = busy;
+  scanBtn.disabled = busy;
 }
 
 /* ------------------------------ inicializace ------------------------------ */
@@ -1027,6 +1127,21 @@ syncBtn.addEventListener("click", () => {
   const tickers = [...new Set(input.value.split(/[\s,]+/).map((t) => t.trim().toUpperCase()).filter(Boolean))];
   if (!tickers.length) return;
   startSync(tickers.slice(0, 100));
+});
+
+// Scan — nákupní příležitosti (zelený flag + BUY_ZONE), jako CLI `divtrack scan`.
+// Prázdné pole = celá trvalá watchlista.
+scanBtn.addEventListener("click", () => {
+  const tickers = [...new Set(input.value.split(/[\s,]+/).map((t) => t.trim().toUpperCase()).filter(Boolean))];
+  startScan(tickers.slice(0, 100));
+});
+
+// Klik na řádek výsledků scanu → scroll k detailní kartě.
+scanResults.addEventListener("click", (e) => {
+  const row = e.target.closest(".scan-row");
+  if (!row) return;
+  const card = document.getElementById(`card-${row.dataset.ticker}`);
+  if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
 // Seřazení watchlisty kliknutím na záhlaví (vzestupně/sestupně podle libovolného atributu).

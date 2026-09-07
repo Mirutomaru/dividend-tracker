@@ -217,6 +217,9 @@ Co umí přímo v prohlížeči (bez CLI):
   řádku pozici smaže. Sekce ukazuje souhrn držeb a cíl ročního příjmu s progress barem.
 - **Cíl ročního příjmu** — zadej částku a „Uložit cíl“ (tlačítko „Odebrat cíl“ ho
   smaže); portfolio pak ukazuje, kolik % cíle aktuální dividendy pokrývají.
+- **🎯 Najít nákupní příležitosti** — ekvivalent CLI `divtrack scan`: analyzuje tickery
+  z pole (nebo celou trvalou watchlistu, pokud je prázdné) a ukáže jen ty se zeleným
+  bezpečnostním flagem a signálem BUY_ZONE. Kliknutím na výsledek skočíš k detailní kartě.
 
 ### Tkinter GUI (desktop)
 

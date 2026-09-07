@@ -14,6 +14,8 @@ Architektura:
   GET  /api/jobs/<id>      {status, total, done, results: [{ticker, report|error}]}
   GET  /api/watchlist      srovnávací řádky PŘÍMO Z LOKÁLNÍ DB (bez externích volání)
   POST /api/sync           {tickers: [...], force?} → 202 {job_id} — cache-first sync do DB
+  POST /api/scan           {tickers?: [...]} → 202 {job_id} — scan (zelený flag + BUY_ZONE);
+                           bez tickers = celá trvalá watchlista; job.extra.matches po dokončení
   GET  /api/fmp-status     stav čítače FMP denních volání (limit 250/den)
   GET  /api/reports        uložené analytické reporty z lokální DB (přežívají restart GUI)
   DELETE /api/reports/<ticker>   smaže uložený report tickera (idempotentní)
@@ -50,6 +52,7 @@ from ..data.db import DEFAULT_DB_PATH, Database  # noqa: E402
 from ..data.fetcher import DataFetchError
 from ..data.sync import sync_all
 from ..data.watchlist import build_watchlist_rows
+from ..domain.scoring import SIGNAL_BUY_ZONE
 from ..pipeline import analyze_ticker
 
 log = logging.getLogger(__name__)
@@ -134,6 +137,44 @@ class JobManager:
             with self._lock:
                 job.extra["error"] = f"Synchronizace selhala: {exc}"
                 job.status = "done"
+
+    def submit_scan(
+        self,
+        tickers: List[str],
+        required_return_pct: float,
+        use_benchmark: bool,
+        db: Optional[Database] = None,
+    ) -> Job:
+        """Asynchronní scan (jako CLI ``divtrack scan``): analyzuje a na konci
+        vyfiltruje akce se zeleným safety flagem + signálem BUY_ZONE."""
+        job = Job(id=uuid.uuid4().hex[:12], total=len(tickers))
+        with self._lock:
+            self._jobs[job.id] = job
+        for ticker in tickers:
+            self._executor.submit(self._run_one, job, ticker, required_return_pct, use_benchmark, db)
+        # Filtrování až po dokončení všech analýz (results jsou hotové).
+        self._executor.submit(self._finalize_scan, job)
+        return job
+
+    def _finalize_scan(self, job: Job) -> None:
+        """Po dokončení scan jobu doplní ``matches`` (zelený flag + BUY_ZONE)."""
+        # _run_one nastaví status="done" až po posledním výsledku — počkat na něj.
+        deadline = time.time() + 3600
+        while time.time() < deadline:
+            with self._lock:
+                finished = job.status == "done" and len(job.results) >= job.total
+                if finished:
+                    matches = [
+                        e["ticker"]
+                        for e in job.results
+                        if "report" in e
+                        and e["report"].get("score", {}).get("safety_flag") == "green"
+                        and SIGNAL_BUY_ZONE in e["report"].get("score", {}).get("signals", [])
+                    ]
+                    job.extra["matches"] = matches
+            if finished:
+                return
+            time.sleep(0.1)
 
     def get(self, job_id: str) -> Optional[Job]:
         with self._lock:
@@ -400,6 +441,9 @@ class WebApp(BaseHTTPRequestHandler):
         if path == "/api/income-target":
             self._handle_income_target_post()
             return
+        if path == "/api/scan":
+            self._handle_scan_post()
+            return
         if path != "/api/analyze":
             self._send_error_json(404, "Nenalezeno.")
             return
@@ -534,6 +578,45 @@ class WebApp(BaseHTTPRequestHandler):
         from ..data.portfolio import build_income_target_report
 
         self._send_json({"ok": True, "income_target": build_income_target_report(self.db)})
+
+    def _handle_scan_post(self) -> None:
+        """Asynchronní scan (jako CLI ``divtrack scan``): zelený flag + BUY_ZONE.
+
+        Tělo: ``{tickers?: [...], required_return_pct?, use_benchmark?}``. Bez
+        ``tickers`` se skenuje celá trvalá watchlista z DB (stejně jako CLI).
+        """
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        tickers_raw = payload.get("tickers") or []
+        tickers: List[str] = []
+        if isinstance(tickers_raw, list) and tickers_raw:
+            for item in tickers_raw[:MAX_TICKERS_PER_JOB]:
+                t = str(item).strip().upper()
+                if not TICKER_RE.match(t):
+                    self._send_error_json(400, f"Neplatný ticker: {item!r}")
+                    return
+                if t not in tickers:
+                    tickers.append(t)
+        else:
+            # bez explicitních tickerů → celá trvalá watchlista (jako CLI)
+            tickers = [r["ticker"] for r in self.db.list_watchlist()]
+
+        if not tickers:
+            self._send_error_json(400, "Žádné tickery ke skenování — naplňte watchlistu nebo předejte 'tickers'.")
+            return
+
+        try:
+            required_return = float(payload.get("required_return_pct", 8.0))
+            use_benchmark = bool(payload.get("use_benchmark", True))
+        except (TypeError, ValueError):
+            self._send_error_json(400, "Neplatné parametry scanu.")
+            return
+
+        job = self.jobs.submit_scan(tickers, required_return, use_benchmark, db=self.db)
+        log.info("scan job %s: skenuji %s", job.id, ", ".join(tickers))
+        self._send_json({"job_id": job.id}, status=202)
 
     # ----------------------------------------------------------------- DELETE
 
