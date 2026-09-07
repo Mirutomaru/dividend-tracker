@@ -81,6 +81,30 @@ def test_sync_without_args_uses_db_tickers(monkeypatch, tmp_path):
     assert calls["tickers"] == ["JNJ", "KO"]  # abecedně
 
 
+def test_sync_without_args_includes_watchlist(monkeypatch, tmp_path):
+    """Bez argumentů se syncne i trvalá watchlista (tickery bez dat v stocks)."""
+    from dividend_tracker import data as data_pkg
+
+    db_path = tmp_path / "x.db"
+    from dividend_tracker.data.db import Database
+
+    db = Database(db_path)
+    db.upsert_stock("KO", name="Coca-Cola")  # má data
+    db.upsert_watchlist("JNJ")  # jen sledován, v stocks ještě není
+    db.close()
+
+    calls = {}
+
+    def fake_sync_all(db_, tickers, force=False):
+        calls["tickers"] = tickers
+        return {"results": {}, "counts": {}, "fmp_usage": {}, "quotes": {}}
+
+    monkeypatch.setattr(data_pkg.sync, "sync_all", fake_sync_all)
+    rc = main(["sync", "--db", str(db_path)])
+    assert rc == 0
+    assert calls["tickers"] == ["JNJ", "KO"]
+
+
 def test_preprocess_does_not_wrap_sync():
     """Zkratka bez podpříkazu nesmí zabalit 'sync' do analyze."""
     from dividend_tracker.cli import _preprocess

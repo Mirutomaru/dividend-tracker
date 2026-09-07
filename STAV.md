@@ -112,7 +112,7 @@ src/dividend_tracker/
 
 ### Stav ověření (poslední kontrola)
 ```bash
-.venv/bin/python -m pytest        # → 292 passed
+.venv/bin/python -m pytest        # → 293 passed
 .venv/bin/ruff check src tests    # → All checks passed!
 .venv/bin/mypy                    # → Success: no issues found in 34 source files
 git status                        # → clean (main)
@@ -139,10 +139,9 @@ git status                        # → clean (main)
 > Udržuj tuhle sekci vždy aktuální — co je v letu, kde jsme, jak pokračovat.
 
 **Nic v letu** (2026-09-07) — hotovo: „web GUI správa watchlisty/portfolia“,
-„cron noční sync“ (nainstalován do crontabu, 02:30), „scan v web GUI“, **grafy**
-(cena + dividendová historie v detailní kartě) a **valuační metriky + TWR/IRR + tooltipy**
-(P/B, Graham číslo, Peter Lynch PEG, DCF rozklad; srovnávací tabulka +5 sloupců;
-portfolio TWR/IRR z transakční historie). Další kandidát: **FMP fallback** (backlog bod 6).
+„cron noční sync“, „scan v web GUI“, **grafy**, **valuační metriky + TWR/IRR + tooltipy**
+a oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/scripts/`,
+`divtrack sync` bez argů teď zahrnuje i trvalou watchlistu). Další kandidát: **FMP fallback** (backlog bod 6).
 
 Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git log -3`.
 
@@ -162,6 +161,12 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — oprava nočního syncu + restart web serveru na aktuální kód
+- **Diagnóza**: Hermes cron job `divtrack-nightly-sync` selhával 4× po sobě (od 04. 9.) chybou „Script not found: ~/.hermes/profiles/developer/scripts/divtrack_nightly_sync.sh“ — skript ležel v `~/.hermes/scripts/` (default profil), ale job se řeší relativně vůči profilemu adresáři. Druhá chyba: `divtrack sync` bez argů čte jen tabulku `stocks`; JNJ/KO jsou jen v trvalé watchlistě → „Databáze je prázdná“ (exit 2). Třetí: web server běžel od 09:59 s kódem starším než commity z 11:18/13:03 (`/api/history` a `/api/scan` vracely 404).
+- **Opravy**: (1) skript zkopírován do `~/.hermes/profiles/developer/scripts/divtrack_nightly_sync.sh`; (2) `cli.py cmd sync` — bez argů se teď sbírá sjednocení `list_stocks()` + `list_watchlist()`; nový test `test_sync_without_args_includes_watchlist`. Celkem **293 passed**, ruff clean, mypy clean.
+- **Restart**: web server (port 8742) spuštěn znovu s aktuálním kódem — ověřeno `/api/health` 200, `/api/history/KO` 200, `POST /api/scan` → job_id.
+- **Poznámka pro uživatele**: DB je prázdná (poslední data z 4. 9.) — po nočním syncu se naplní JNJ + KO; alternativně v GUI tlačítko „Synchronizovat“.
 
 ### 2026-09-07 — hotovo „valuační metriky + TWR/IRR + tooltipy“
 - **Backend**: `models.py` — `MetricsReport` dostal `p_b`, `graham_number`, `lynch_peg`. `domain/metrics.py` — výpočet P/B (cena ÷ equity/shares), Graham číslo √(22,5·EPS_TTM·BVPS) a Peter Lynch PEG = P/E ÷ 5letý CAGR dividend (proxy růstu). Nová tabulka `portfolio_transactions` v `db.py` + CRUD (`add_transaction`/`list_transactions`/`clear_transactions`); `upsert_position` automaticky zapisuje buy/sell transakce při změně pozice (prodej za poslední známou cenou z quotes).

@@ -219,8 +219,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         db = Database(args.db or DEFAULT_DB_PATH)
         try:
             tickers = [t.strip().upper() for t in (args.tickers or [])]
-            if not tickers:  # bez argumentu — vše, co je už v DB
-                tickers = sorted(s["ticker"] for s in db.list_stocks())
+            if not tickers:  # bez argumentu — vše z DB i trvalé watchlisty
+                known = {s["ticker"] for s in db.list_stocks()}
+                known.update(w["ticker"] for w in db.list_watchlist())
+                tickers = sorted(known)
             if not tickers:
                 print("Databáze je prázdná — zadejte tickery, např. divtrack sync KO JNJ", file=sys.stderr)
                 return 2
