@@ -720,7 +720,8 @@ function renderTickerCard(entry) {
         <div class="ticker-price">${fmtMoney(r.price_current, r.currency)}</div>
         <div class="ticker-meta">${escapeHtml(new Date(r.generated_at).toLocaleDateString("cs-CZ"))}</div>
       </div>
-    </div>
+      <button type="button" class="report-remove-btn" data-ticker="${escapeHtml(r.ticker)}" title="Smazat uložený report">✕</button>
+      </div>
     ${scoreHtml}
     ${dividendHtml}
     ${valuationHtml}
@@ -732,6 +733,45 @@ function renderTickerCard(entry) {
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ------------------------------ uložené reporty (DB) ------------------------------ */
+
+/** Načte perzistentní analytické reporty z lokální DB a vykreslí karty + srovnávací tabulku. */
+async function loadStoredReports() {
+  try {
+    const res = await fetch("/api/reports");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const reports = data.reports || [];
+    resultsEl.innerHTML = "";
+    for (const report of reports) {
+      const entry = { ticker: report.ticker, report };
+      resultsEl.insertAdjacentHTML("beforeend", `<div id="card-${escapeHtml(report.ticker)}">${renderTickerCard(entry)}</div>`);
+      animateRing(document.querySelector(`#card-${report.ticker} .ring-fg`));
+    }
+    if (reports.length) {
+      tableSection.classList.remove("hidden");
+      renderTable(reports.map((r) => rowFromEntry({ ticker: r.ticker, report: r })));
+      emptyState.classList.add("hidden");
+    } else {
+      tableSection.classList.add("hidden");
+      currentRows = [];
+    }
+  } catch {
+    /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+/** Smaže uložený report tickera (karta + řádek v tabulce). */
+async function removeStoredReport(ticker) {
+  try {
+    const res = await fetch(`/api/reports/${encodeURIComponent(ticker)}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 405) throw new Error(`HTTP ${res.status}`);
+    await loadStoredReports();
+  } catch {
+    alert("Server nedostupný — report se nepodařilo smazat.");
+  }
 }
 
 /* ------------------------------ API + polling ------------------------------ */
@@ -896,9 +936,17 @@ alertsBody.addEventListener("click", (e) => {
   removeAlert(Number(btnEl.dataset.alertId));
 });
 
+// Smazání uloženého reportu — delegace na tlačítko v detailní kartě.
+resultsEl.addEventListener("click", (e) => {
+  const btnEl = e.target.closest(".report-remove-btn");
+  if (!btnEl) return;
+  removeStoredReport(btnEl.dataset.ticker);
+});
+
 // Start: načíst watchlist z DB + portfolio + upozornění + stav FMP limitu.
 loadWatchlist();
 loadPortfolio();
 loadAlerts();
 loadFmpStatus();
+loadStoredReports(); // perzistentní analytické reporty (přežívají restart GUI)
 input.focus();

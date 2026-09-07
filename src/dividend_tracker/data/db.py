@@ -13,6 +13,8 @@ při každém dotazu. Přístup je přes :class:`Database` (thread-safe, WAL re�
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sqlite3
 import threading
@@ -21,6 +23,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+
+log = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS stocks (
@@ -116,6 +120,16 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,          -- např. income_target, tax_rate_us
     value TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- Rozšíření: perzistentní analytické reporty (web GUI — kompletní přehled)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS reports (
+    ticker      TEXT PRIMARY KEY,     -- poslední hotový report na ticker (upsert)
+    report_json TEXT NOT NULL,        -- normalizovaný report (JSON)
+    created_at  REAL                  -- epoch sekund generování
 );
 """
 
@@ -220,6 +234,18 @@ class Database:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM stocks ORDER BY ticker").fetchall()
             return [dict(r) for r in rows]
+
+    def remove_ticker(self, ticker: str) -> None:
+        """Odstraní všechny synchronizované údaje o tickeru (idempotentní).
+
+        Dotkne se tabulek ``stocks``, ``dividends_history``, ``dividends_calendar``,
+        ``quotes`` a ``price_history``. Watchlist, portfolio i reporty se nedotýká —
+        ty spravuje volající (např. web GUI při odebrání akcie).
+        """
+        tk = ticker.upper()
+        with self._conn() as conn:
+            for table in ("stocks", "dividends_history", "dividends_calendar", "quotes", "price_history"):
+                conn.execute(f"DELETE FROM {table} WHERE ticker=?", (tk,))
 
     # -------------------------------------------------------- dividends_history
 
@@ -444,6 +470,43 @@ class Database:
                 "SELECT 1 FROM watchlist WHERE ticker=?", (ticker.upper(),)
             ).fetchone()
             return row is not None
+
+    # ----------------------------------------------------------------- reports
+
+    def save_report(self, report: Dict[str, Any]) -> None:
+        """Uloží/aktualizuje poslední analytický report pro ticker (upsert)."""
+        tk = str(report.get("ticker") or "").upper()
+        if not tk:
+            return
+        stored = dict(report)
+        stored["ticker"] = tk  # unifikovaný klíč pro zobrazení i mazání
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO reports (ticker, report_json, created_at) VALUES (?,?,?)
+                   ON CONFLICT(ticker) DO UPDATE SET
+                     report_json = excluded.report_json,
+                     created_at  = excluded.created_at""",
+                (tk, json.dumps(stored, ensure_ascii=False), time.time()),
+            )
+
+    def list_reports(self) -> List[Dict[str, Any]]:
+        """Všechny uložené reporty seřazené abecedně podle tickera."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT ticker, report_json FROM reports ORDER BY ticker"
+            ).fetchall()
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            try:
+                out.append(json.loads(r["report_json"]))
+            except (ValueError, TypeError):
+                log.warning("poškozený report pro %s — přeskočeno", r["ticker"])
+        return out
+
+    def delete_report(self, ticker: str) -> None:
+        """Smaže uložený report tickera (idempotentní)."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM reports WHERE ticker=?", (ticker.upper(),))
 
     # ----------------------------------------------------------------- portfolio
 

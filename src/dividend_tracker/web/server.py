@@ -15,6 +15,8 @@ Architektura:
   GET  /api/watchlist      srovnávací řádky PŘÍMO Z LOKÁLNÍ DB (bez externích volání)
   POST /api/sync           {tickers: [...], force?} → 202 {job_id} — cache-first sync do DB
   GET  /api/fmp-status     stav čítače FMP denních volání (limit 250/den)
+  GET  /api/reports        uložené analytické reporty z lokální DB (přežívají restart GUI)
+  DELETE /api/reports/<ticker>   smaže uložený report tickera (idempotentní)
   =======================  =====================================================
 
 Bezpečnostní poznamky: server je určen pro lokální použití (výchozí bind
@@ -98,12 +100,19 @@ class JobManager:
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="divtrack")
 
-    def submit(self, tickers: List[str], required_return_pct: float, use_benchmark: bool) -> Job:
+    def submit(
+        self,
+        tickers: List[str],
+        required_return_pct: float,
+        use_benchmark: bool,
+        db: Optional[Database] = None,
+    ) -> Job:
+        """Spustí analýzu; s ``db`` se každý hotový report perzistuje do lokální DB."""
         job = Job(id=uuid.uuid4().hex[:12], total=len(tickers))
         with self._lock:
             self._jobs[job.id] = job
         for ticker in tickers:
-            self._executor.submit(self._run_one, job, ticker, required_return_pct, use_benchmark)
+            self._executor.submit(self._run_one, job, ticker, required_return_pct, use_benchmark, db)
         return job
 
     def submit_sync(self, db: Database, tickers: List[str], force: bool) -> Job:
@@ -131,7 +140,12 @@ class JobManager:
             return self._jobs.get(job_id)
 
     def _run_one(
-        self, job: Job, ticker: str, required_return_pct: float, use_benchmark: bool
+        self,
+        job: Job,
+        ticker: str,
+        required_return_pct: float,
+        use_benchmark: bool,
+        db: Optional[Database] = None,
     ) -> None:
         try:
             report = analyze_ticker(ticker, required_return_pct=required_return_pct, use_benchmark=use_benchmark)
@@ -146,6 +160,14 @@ class JobManager:
             job.results.append(entry)
             if len(job.results) >= job.total:
                 job.status = "done"
+        # Perzistence hotového reportu — web GUI pak ukáže kompletní přehled
+        # všech analyzovaných akcií i po obnovení stránky. Chyba zápisu nesmí
+        # ovlivnit výsledek jobu (report už je v ``entry``).
+        if db is not None and "report" in entry:
+            try:
+                db.save_report(entry["report"])
+            except Exception as exc:  # noqa: BLE001 — DB chyba nesmí zabít job
+                log.warning("job %s: report pro %s se nepodařilo uložit do DB: %s", job.id, ticker, exc)
 
 
 class WebApp(BaseHTTPRequestHandler):
@@ -202,6 +224,9 @@ class WebApp(BaseHTTPRequestHandler):
             if path == "/api/watchlist":
                 self._handle_watchlist()
                 return
+            if path == "/api/reports":
+                self._handle_reports_get()
+                return
             if path == "/api/portfolio":
                 self._handle_portfolio()
                 return
@@ -240,6 +265,11 @@ class WebApp(BaseHTTPRequestHandler):
         """Srovnávací řádky přímo z lokální DB — žádné externí volání."""
         rows = build_watchlist_rows(self.db)
         self._send_json({"rows": rows, "count": len(rows)})
+
+    def _handle_reports_get(self) -> None:
+        """Uložené analytické reporty přímo z lokální DB (bez externích volání)."""
+        reports = self.db.list_reports()
+        self._send_json({"reports": reports, "count": len(reports)})
 
     def _handle_portfolio(self) -> None:
         """Portfolio + cíl ročního příjmů přímo z lokální DB."""
@@ -374,7 +404,7 @@ class WebApp(BaseHTTPRequestHandler):
             self._send_error_json(400, "Neplatné parametry analýzy.")
             return
 
-        job = self.jobs.submit(tickers, required_return, use_benchmark)
+        job = self.jobs.submit(tickers, required_return, use_benchmark, db=self.db)
         log.info("job %s: analyzuji %s", job.id, ", ".join(tickers))
         self._send_json({"job_id": job.id}, status=202)
 
@@ -410,6 +440,14 @@ class WebApp(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:  # noqa: N802 — API http.server
         path = self.path.split("?", 1)[0]
+        if path.startswith("/api/reports/") and path != "/api/reports":
+            ticker = path.rsplit("/", 1)[-1].upper()
+            if not TICKER_RE.match(ticker):
+                self._send_error_json(400, f"Neplatný ticker: {ticker!r}")
+                return
+            self.db.delete_report(ticker)
+            self._send_json({"ok": True})
+            return
         if not (path.startswith("/api/alerts/") and path != "/api/alerts"):
             self._send_error_json(404, "Nenalezeno.")
             return

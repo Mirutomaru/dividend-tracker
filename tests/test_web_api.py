@@ -491,3 +491,115 @@ def test_export_analysis_no_reports_404(monkeypatch, server):
 def test_export_analysis_unknown_job_404(server):
     status, body = _request(server, "GET", "/api/export/analysis/neexistujici.csv")
     assert status == 404 and "error" in body
+
+
+# ------------------------------------------------------------------ reports (DB)
+
+@pytest.fixture()
+def reports_server(tmp_path):
+    """Server s předuloženými analytickými reporty v lokální DB."""
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "reports_web.db")
+    for tk, price in (("KO", 60.0), ("JNJ", 150.0)):
+        db.save_report({
+            "schema_version": "1.0",
+            "ticker": tk,
+            "generated_at": "2026-09-07T10:00:00+00:00",
+            "company": {"name": f"Firma {tk}", "sector": "Consumer Defensive"},
+            "currency": "USD",
+            "price_current": price,
+            "score": {"total_0_100": 72.5},
+        })
+    httpd = create_app(port=0, db_path=db.path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    yield f"http://{host}:{port}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_reports_endpoint_empty(server):
+    """Prázdná DB → prázdný seznam, ale endpoint funguje."""
+    status, body = _request(server, "GET", "/api/reports")
+    assert status == 200
+    assert body["reports"] == [] and body["count"] == 0
+
+
+def test_reports_endpoint_returns_stored(reports_server):
+    """Uložené reporty se vrátí abecedně s kompletním obsahem."""
+    status, body = _request(reports_server, "GET", "/api/reports")
+    assert status == 200 and body["count"] == 2
+    assert [r["ticker"] for r in body["reports"]] == ["JNJ", "KO"]
+    ko = next(r for r in body["reports"] if r["ticker"] == "KO")
+    assert ko["price_current"] == 60.0 and ko["score"]["total_0_100"] == 72.5
+
+
+def test_analyze_persists_report_to_db(monkeypatch, server):
+    """Hotový analytický job se perzistuje do DB (GET /api/reports ho vidí)."""
+    from dividend_tracker import web as web_pkg
+
+    monkeypatch.setattr(
+        web_pkg.server, "analyze_ticker",
+        lambda t, **kw: {
+            "ticker": t,
+            "company": {"name": f"Firma {t}", "sector": "Tech"},
+            "price_current": 42.0,
+            "score": {"total_0_100": 55.0},
+        },
+    )
+
+    status, body = _request(server, "POST", "/api/analyze", {"tickers": ["KO"]})
+    assert status == 202
+    job_id = body["job_id"]
+    _wait_job(server, job_id)
+
+    # report přežil „restart“ — je v lokální DB a endpoint ho vrátí
+    status, body = _request(server, "GET", "/api/reports")
+    assert status == 200 and body["count"] == 1
+    assert body["reports"][0]["ticker"] == "KO"
+
+
+def test_analyze_error_not_persisted(monkeypatch, server):
+    """Selhalý ticker (DataFetchError) se do DB neukládá."""
+    from dividend_tracker import web as web_pkg
+
+    def fake_analyze(ticker, required_return_pct=8.0, use_benchmark=True):
+        raise DataFetchError(f"žádná data pro {ticker}")
+
+    monkeypatch.setattr(web_pkg.server, "analyze_ticker", fake_analyze)
+
+    status, body = _request(server, "POST", "/api/analyze", {"tickers": ["XYZ"]})
+    assert status == 202
+    job_id = body["job_id"]
+    _wait_job(server, job_id)
+
+    status, body = _request(server, "GET", "/api/reports")
+    assert status == 200 and body["reports"] == []
+
+
+def test_delete_report_endpoint(reports_server):
+    """DELETE /api/reports/<ticker> → report zmizí (idempotentní)."""
+    status, _ = _request(reports_server, "DELETE", "/api/reports/KO")
+    assert status == 200
+
+    status, body = _request(reports_server, "GET", "/api/reports")
+    assert [r["ticker"] for r in body["reports"]] == ["JNJ"]
+
+    # druhý DELETE na stejný ticker — idempotentní ok
+    status, _ = _request(reports_server, "DELETE", "/api/reports/KO")
+    assert status == 200
+
+
+def test_delete_report_case_insensitive(reports_server):
+    status, _ = _request(reports_server, "DELETE", "/api/reports/ko")
+    assert status == 200
+    status, body = _request(reports_server, "GET", "/api/reports")
+    assert [r["ticker"] for r in body["reports"]] == ["JNJ"]
+
+
+def test_delete_report_invalid_ticker_400(server):
+    # "!" není v povolené množině [A-Z0-9.-] → 400 (i po upper())
+    status, body = _request(server, "DELETE", "/api/reports/BAD!TICKER")
+    assert status == 400 and "error" in body

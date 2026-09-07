@@ -112,6 +112,96 @@ def test_get_api_usage_empty(db):
     assert u["remaining"] is None
 
 
+# --------------------------------------------------------------------- reports
+
+def _sample_report(ticker: str, price: float) -> dict:
+    return {
+        "schema_version": "1.0",
+        "ticker": ticker,
+        "generated_at": "2026-09-07T10:00:00+00:00",
+        "company": {"name": f"Firma {ticker}", "sector": "Tech"},
+        "currency": "USD",
+        "price_current": price,
+        "score": {"total_0_100": 72.5},
+    }
+
+
+def test_save_and_list_reports(db):
+    db.save_report(_sample_report("ko", 60.0))
+    db.save_report(_sample_report("JNJ", 150.0))
+    reports = db.list_reports()
+    assert [r["ticker"] for r in reports] == ["JNJ", "KO"]  # abecedně, ticker normalizovaný
+    ko = next(r for r in reports if r["ticker"] == "KO")
+    assert ko["price_current"] == 60.0 and ko["score"]["total_0_100"] == 72.5
+
+
+def test_save_report_upserts(db):
+    db.save_report(_sample_report("KO", 60.0))
+    db.save_report(_sample_report("KO", 63.5))
+    reports = db.list_reports()
+    assert len(reports) == 1
+    assert reports[0]["price_current"] == 63.5
+
+
+def test_save_report_without_ticker_noop(db):
+    db.save_report({"schema_version": "1.0"})  # bez tickera se nic neukládá
+    assert db.list_reports() == []
+
+
+def test_delete_report_idempotent(db):
+    db.save_report(_sample_report("KO", 60.0))
+    db.delete_report("ko")  # case-insensitive
+    assert db.list_reports() == []
+    db.delete_report("KO")  # druhýkrát — bez výjimky
+
+
+def test_list_reports_skips_corrupted_json(db):
+    db.save_report(_sample_report("GOOD", 10.0))
+    with db._conn() as conn:  # noqa: SLF001 — uměle poškozený záznam
+        conn.execute(
+            "INSERT INTO reports (ticker, report_json, created_at) VALUES (?,?,?)",
+            ("BAD", "{neplatné json", time.time()),
+        )
+    reports = db.list_reports()
+    assert [r["ticker"] for r in reports] == ["GOOD"]
+
+
+# --------------------------------------------------------------- remove_ticker
+
+def test_remove_ticker_cleans_synced_tables(db):
+    db.upsert_stock("KO", name="Coca-Cola")
+    db.upsert_quote("KO", current_price=60.0)
+    db.replace_dividends([{"ticker": "KO", "ex_date": "2026-01-15", "dividend_amount": 0.49}])
+    db.replace_calendar([{"ticker": "KO", "ex_date": "2027-01-15", "dividend_amount": 0.5}])
+    db.record_price_snapshot("KO", "2026-09-01", 58.0)
+
+    db.remove_ticker("ko")  # case-insensitive
+
+    assert db.get_stock("KO") is None
+    assert db.get_quote("KO") is None
+    assert db.get_dividends("KO") == []
+    assert db.get_calendar("KO") == []
+    assert db.get_price_history("KO") == []
+
+
+def test_remove_ticker_keeps_watchlist_portfolio_reports(db):
+    db.upsert_stock("KO", name="Coca-Cola")
+    db.upsert_quote("KO", current_price=60.0)
+    db.upsert_watchlist("KO")
+    db.upsert_position("KO", shares=10, avg_cost=50.0)
+    db.save_report(_sample_report("KO", 60.0))
+
+    db.remove_ticker("KO")
+
+    assert db.is_in_watchlist("KO") is True       # watchlist se nedotkne
+    assert len(db.list_positions()) == 1          # portfolio se nedotkne
+    assert [r["ticker"] for r in db.list_reports()] == ["KO"]  # reporty se nedotknou
+
+
+def test_remove_ticker_idempotent(db):
+    db.remove_ticker("NEZNAMY")  # neexistující ticker — bez výjimky
+
+
 # ------------------------------------------------------------------------ FMP
 
 @pytest.fixture
