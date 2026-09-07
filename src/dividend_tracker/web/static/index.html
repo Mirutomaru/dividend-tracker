@@ -52,30 +52,19 @@
           <input type="text" id="wl-add-ticker" placeholder="Přidat do trvalé watchlisty (např. KO)" required maxlength="10" style="width:280px">
           <button type="submit" class="btn btn-primary">+ Sledovat</button>
         </form>
+        <!-- Přepínatelné pohledy tabulky + volba sloupců (pohled „Vše / Vlastní“) -->
+        <div class="wl-tabs">
+          <button type="button" class="wl-tab active" data-wl-tab="dividends">Dividendy</button>
+          <button type="button" class="wl-tab" data-wl-tab="price">Cena a volatilita</button>
+          <button type="button" class="wl-tab" data-wl-tab="all">Vše / Vlastní</button>
+          <div class="wl-cols-wrap hidden" id="wl-cols-wrap">
+            <button type="button" class="mini-btn wl-cols-btn" id="wl-cols-btn">Sloupce ▾</button>
+            <div class="wl-cols-menu hidden" id="wl-cols-menu"></div>
+          </div>
+        </div>
         <div class="table-scroll">
           <table id="watchlist-table">
-            <thead>
-              <tr>
-                <th data-key="in_watchlist" class="sortable num" title="Trvalá watchlista — kliknutím přepne ★/☆">★</th>
-                <th data-key="ticker" class="sortable">Ticker</th>
-                <th data-key="name" class="sortable">Název</th>
-                <th data-key="sector" class="sortable">Sektor</th>
-                <th data-key="price" class="sortable num">Cena</th>
-                <th data-key="change" class="sortable num">Změna</th>
-                <th data-key="volume" class="sortable num">Objem</th>
-                <th data-key="dps_ttm" class="sortable num">DPS TTM</th>
-                <th data-key="yield_pct" class="sortable num">Yield %</th>
-                <th data-key="net_yield_pct" class="sortable num">Net yield %</th>
-                <th data-key="growth_5y_pct" class="sortable num">Růst 5l %</th>
-                <th data-key="streak_years" class="sortable num">Série l.</th>
-                <th data-key="next_ex_date" class="sortable">Příští ex-date</th>
-                <th data-key="next_dividend" class="sortable num">Příští div.</th>
-                <th data-key="low_52w" class="sortable num">Min 52t</th>
-                <th data-key="high_52w" class="sortable num">Max 52t</th>
-                <th data-key="drawdown_from_high_pct" class="sortable num">Drawdown %</th>
-                <th data-key="percentile_52w" class="sortable num">Percentil 52t</th>
-              </tr>
-            </thead>
+            <thead id="watchlist-head"></thead>
             <tbody id="watchlist-body"></tbody>
           </table>
         </div>

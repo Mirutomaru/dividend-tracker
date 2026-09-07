@@ -253,7 +253,74 @@ function renderTable(rows) {
 
 /* ------------------------------ watchlist (DB srovnání) ------------------------------ */
 
-/** Formátuje hodnotu buňky podle typu atributu. */
+/** Definice sloupců watchlisty.
+ *  align: left = text, right = čísla/částky/procenta, center = data a ikony.
+ *  merge: "ticker" | "price" | "next_div" — buňka sloučí dva atributy do jednoho sloupce.
+ *  sortKey: klíč řádku pro seřazení (sloučené sloupce řadí podle primárního údaje). */
+const WL_COLS = [
+  { key: "in_watchlist", label: "★", align: "center", sortable: false, title: "Trvalá watchlista — kliknutím přepne ★/☆" },
+  { key: "ticker_name", sortKey: "ticker", label: "Ticker", align: "left", merge: "ticker" },
+  { key: "sector", label: "Sektor", align: "left" },
+  { key: "price_change", sortKey: "price", label: "Cena / Změna", align: "right", merge: "price" },
+  // — záložka „Dividendy“ —
+  { key: "dps_ttm", label: "DPS TTM", align: "right" },
+  { key: "yield_pct", label: "Yield %", align: "right" },
+  { key: "net_yield_pct", label: "Net yield %", align: "right" },
+  { key: "growth_5y_pct", label: "5R růst", align: "right" },
+  { key: "streak_years", label: "Série let", align: "right" },
+  { key: "next_dividend", label: "Příští div.", align: "center", merge: "next_div" },
+  // — záložka „Cena a volatilita“ —
+  { key: "volume", label: "Objem", align: "right" },
+  { key: "range_52w", label: "52t rozsah", align: "right", merge: "range" },
+  { key: "drawdown_from_high_pct", label: "Drawdown %", align: "right" },
+];
+
+/** Záložky pohledů — fixní sloupce (★, Ticker, Sektor, Cena/Změna) jsou vždy viditelné. */
+const WL_TABS = {
+  dividends: ["dps_ttm", "yield_pct", "net_yield_pct", "growth_5y_pct", "streak_years", "next_dividend"],
+  price: ["volume", "range_52w", "drawdown_from_high_pct"],
+};
+
+let wlTab = "dividends"; // aktivní záložka pohledu
+const WL_HIDDEN_KEY = "wlHiddenCols";
+/** Vlastní skryté sloupce (pohled „Vše / Vlastní“) — perzistentní v localStorage. */
+let wlHiddenCols = new Set(
+  JSON.parse(localStorage.getItem(WL_HIDDEN_KEY) || "[]").filter((k) => WL_COLS.some((c) => c.key === k))
+);
+
+/** Sloupce viditelné v aktuálním pohledu (fixní + obsah záložky, bez skrytých). */
+function wlVisibleCols() {
+  const extra = wlTab === "all" ? WL_COLS.map((c) => c.key) : WL_TABS[wlTab];
+  return WL_COLS.filter((c) => !wlHiddenCols.has(c.key) && (extra.includes(c.key) || !WL_TABS.dividends.includes(c.key) && !WL_TABS.price.includes(c.key)));
+}
+
+/** Zkrácené datum pro sloučenou buňku „Příští div.“ — 15. 10. */
+function fmtDateShort(iso) {
+  if (!iso) return "—";
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return `${d.getDate()}. ${d.getMonth() + 1}.`;
+}
+
+/** Změna v % z absolutní změny a aktuální ceny. */
+function changePct(change, price) {
+  if (change == null || !price) return null;
+  const prev = price - change;
+  if (!prev) return null;
+  return (change / prev) * 100;
+}
+
+/** Mini range-bar: tečka na horizontální lince mezi 52t minimem a maximem. */
+function rangeBarHtml(row) {
+  const lo = row.low_52w, hi = row.high_52w, cur = row.price;
+  if (lo == null || hi == null || hi <= lo) return ""; // bez rozpětí bar neukazujeme (text zůstává)
+  let pos = cur != null ? ((cur - lo) / (hi - lo)) * 100 : null;
+  if (pos != null) pos = Math.max(2, Math.min(98, pos));
+  const dot = pos == null ? "" : `<span class="range-dot" style="left:${pos.toFixed(1)}%"></span>`;
+  return `<div class="range-bar"><div class="range-track">${dot}</div></div>`;
+}
+
+/** Formátuje hodnotu buňky podle typu atributu (včetně sloučených dvojic). */
 function wlCell(key, row) {
   const v = row[key];
   switch (key) {
@@ -261,15 +328,23 @@ function wlCell(key, row) {
       // ★ trvalá watchlista — kliknutím se přepne (delegace na tbody)
       return `<button type="button" class="wl-star-btn ${v ? "active" : ""}" data-ticker="${escapeHtml(row.ticker)}" title="${v ? "Odebrat z trvalé watchlisty" : "Přidat do trvalé watchlisty"}">${v ? "★" : "☆"}</button>`;
     }
-    case "ticker": return `<span class="td-ticker">${escapeHtml(v)}</span>`;
-    case "name": return escapeHtml(v || "—");
-    case "sector": return escapeHtml(v || "—");
-    case "price": return fmtMoney(v, row.currency);
-    case "change": {
-      if (v == null) return "—";
-      const cls = v > 0 ? "val-good" : v < 0 ? "val-bad" : "";
-      const sign = v > 0 ? "+" : "";
-      return `<span class="${cls}">${sign}${Number(v).toFixed(2)}</span>`;
+    case "ticker_name": {
+      // sloučená buňka: ticker nahoře, název drobným tlumeným textem pod ním
+      return `<span class="td-ticker">${escapeHtml(row.ticker)}</span>${row.name ? `<span class="td-sub">${escapeHtml(row.name)}</span>` : ""}`;
+    }
+    case "sector": {
+      // sektor jako šedý badge/pilulka, aby nesplýval s názvem firmy
+      return v ? `<span class="sector-badge">${escapeHtml(v)}</span>` : "—";
+    }
+    case "price_change": {
+      // sloučená buňka: cena nahoře, změna (absolutní + %) drobně pod ní
+      const price = fmtMoney(row.price, row.currency);
+      if (row.change == null) return `<span class="cell-main">${price}</span>`;
+      const cls = row.change > 0 ? "val-good" : row.change < 0 ? "val-bad" : "";
+      const sign = row.change > 0 ? "+" : "";
+      const pct = changePct(row.change, row.price);
+      const sub = `${sign}${Number(row.change).toFixed(2)}${pct != null ? ` (${sign}${pct.toFixed(1)} %)` : ""}`;
+      return `<span class="cell-main">${price}</span><span class="td-sub ${cls}">${sub}</span>`;
     }
     case "volume": return fmtInt(v);
     case "dps_ttm": return fmtMoney(v, row.currency);
@@ -294,28 +369,53 @@ function wlCell(key, row) {
       const cls = v >= 10 ? "val-good" : "";
       return `<span class="${cls}">${v}</span>`;
     }
-    case "next_ex_date": return escapeHtml(v || "—");
-    case "next_dividend": return fmtMoney(v, row.currency);
-    case "low_52w": return fmtMoney(v, row.currency);
-    case "high_52w": return fmtMoney(v, row.currency);
+    case "next_dividend": {
+      // sloučená buňka: datum nahoře, částka drobně pod ním (centrováno)
+      if (!row.next_ex_date && row.next_dividend == null) return "—";
+      const date = fmtDateShort(row.next_ex_date);
+      const amt = fmtMoney(row.next_dividend, row.currency);
+      return `<span class="cell-main">${date}</span><span class="td-sub">${amt}</span>`;
+    }
+    case "range_52w": {
+      // sloučený sloupec místo Min/Max/Percent: mini range-bar + $lo – $hi, percentil pod ním
+      if (row.low_52w == null || row.high_52w == null) return "—";
+      const bar = rangeBarHtml(row);
+      // min === max (zatím jen jeden bod historie) — bez rozpětí a percentilu
+      if (row.high_52w <= row.low_52w) {
+        return `<div class="range-cell">${bar}<span class="cell-main">${fmtMoney(row.low_52w, row.currency)}</span></div>`;
+      }
+      const pct = row.percentile_52w != null ? ` · ${Number(row.percentile_52w).toFixed(0)} %` : "";
+      return `<div class="range-cell">${bar}<span class="cell-main">${fmtMoney(row.low_52w, row.currency)} – ${fmtMoney(row.high_52w, row.currency)}</span><span class="td-sub">percentil 52t${pct}</span></div>`;
+    }
     case "drawdown_from_high_pct": {
       if (v == null) return "—";
       // výrazný drawdown = potenciální příležitost → zeleně
-      const cls = v <= -15 ? "val-good" : v < 0 ? "" : "";
+      const cls = v <= -15 ? "val-good" : "";
       const sign = v > 0 ? "+" : "";
       return `<span class="${cls}">${sign}${fmtPct(v)}</span>`;
-    }
-    case "percentile_52w": {
-      if (v == null) return "—";
-      // nízký percentil = cena blízko 52t dna → zeleně
-      const cls = v <= 20 ? "val-good" : "";
-      return `<span class="${cls}">${Number(v).toFixed(1)}</span>`;
     }
     default: return v == null ? "—" : escapeHtml(String(v));
   }
 }
 
+/** Vykreslí záhlaví tabulky podle aktuálního pohledu (delegovaný listener na thead). */
+function renderWatchlistHead() {
+  const head = $("#watchlist-head");
+  if (!head) return;
+  head.innerHTML = `<tr>${wlVisibleCols()
+    .map((c) => {
+      const cls = [
+        c.sortable === false ? "" : "sortable",
+        c.align === "right" ? "num" : "",
+        c.align === "center" ? "ctr" : "",
+      ].filter(Boolean).join(" ");
+      return `<th data-key="${c.key}" class="${cls}"${c.title ? ` title="${escapeHtml(c.title)}"` : ""}>${escapeHtml(c.label)}</th>`;
+    })
+    .join("")}</tr>`;
+}
+
 function renderWatchlist() {
+  const cols = wlVisibleCols();
   const sorted = [...wlRows].sort((a, b) => {
     let va = a[wlSortKey], vb = b[wlSortKey];
     if (va == null && vb == null) return a.ticker.localeCompare(b.ticker);
@@ -326,14 +426,13 @@ function renderWatchlist() {
   });
 
   watchlistBody.innerHTML = sorted.map((row) => {
-    const cells = ["in_watchlist", "ticker", "name", "sector", "price", "change", "volume", "dps_ttm",
-      "yield_pct", "net_yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend",
-      "low_52w", "high_52w", "drawdown_from_high_pct", "percentile_52w"]
-      .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|net_yield_pct|growth_5y_pct|streak_years|next_dividend|low_52w|high_52w|drawdown_from_high_pct|percentile_52w)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
+    const cells = cols
+      .map((c) => `<td class="${c.align === "right" ? "num" : c.align === "center" ? "ctr" : ""}">${wlCell(c.key, row)}</td>`)
       .join("");
     return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
   }).join("");
 
+  renderWatchlistHead();
   watchlistCount.textContent = `${wlRows.length} ticker(ů) v databáze`;
 
   // indikátor aktuálního řazení
@@ -341,6 +440,32 @@ function renderWatchlist() {
     th.classList.remove("sorted-asc", "sorted-desc");
     if (th.dataset.key === wlSortKey) th.classList.add(wlSortDir === -1 ? "sorted-desc" : "sorted-asc");
   });
+}
+
+/** Přepne aktivní záložku pohledu a překreslí tabulku. */
+function setWlTab(tab) {
+  if (!WL_TABS[tab] && tab !== "all") return;
+  wlTab = tab;
+  document.querySelectorAll(".wl-tab").forEach((b) => b.classList.toggle("active", b.dataset.wlTab === tab));
+  $("#wl-cols-wrap").classList.toggle("hidden", tab !== "all"); // volba sloupců jen v pohledu „Vše / Vlastní“
+  renderWatchlist();
+}
+
+/** Dropdown pro zapnutí/vypnutí konkrétních sloupců (pohled „Vše / Vlastní“). */
+function buildWlColsMenu() {
+  const menu = $("#wl-cols-menu");
+  if (!menu) return;
+  menu.innerHTML = WL_COLS.filter((c) => c.key !== "in_watchlist")
+    .map(
+      (c) => `<label class="wl-col-item"><input type="checkbox" data-wl-col="${c.key}" ${wlHiddenCols.has(c.key) ? "" : "checked"}> ${escapeHtml(c.label)}</label>`
+    )
+    .join("");
+}
+
+function toggleWlCol(key, checked) {
+  if (checked) wlHiddenCols.delete(key); else wlHiddenCols.add(key);
+  localStorage.setItem(WL_HIDDEN_KEY, JSON.stringify([...wlHiddenCols]));
+  renderWatchlist();
 }
 
 async function loadWatchlist() {
@@ -1400,14 +1525,36 @@ scanResults.addEventListener("click", (e) => {
   if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 
-// Seřazení watchlisty kliknutím na záhlaví (vzestupně/sestupně podle libovolného atributu).
-document.querySelectorAll("#watchlist-table thead th.sortable").forEach((th) => {
-  th.addEventListener("click", () => {
-    const key = th.dataset.key;
-    if (wlSortKey === key) wlSortDir *= -1;
-    else { wlSortKey = key; wlSortDir = typeof wlRows[0]?.[key] === "string" ? 1 : -1; }
-    renderWatchlist();
-  });
+// Seřazení watchlisty kliknutím na záhlaví (delegace — hlavička se překresluje s pohledem).
+$("#watchlist-head").addEventListener("click", (e) => {
+  const th = e.target.closest("th.sortable");
+  if (!th) return;
+  const col = WL_COLS.find((c) => c.key === th.dataset.key);
+  const key = col ? (col.sortKey || col.key) : th.dataset.key; // sloučené sloupce řadí podle primárního údaje
+  if (wlSortKey === key) wlSortDir *= -1;
+  else { wlSortKey = key; wlSortDir = typeof wlRows[0]?.[key] === "string" ? 1 : -1; }
+  renderWatchlist();
+});
+
+// Přepínání pohledů watchlisty (záložky Dividendy / Cena a volatilita / Vše).
+document.querySelectorAll(".wl-tab").forEach((b) => {
+  b.addEventListener("click", () => setWlTab(b.dataset.wlTab));
+});
+
+// Dropdown „Sloupce“ — zapnutí/vypnutí konkrétních sloupců (pohled „Vše / Vlastní“).
+buildWlColsMenu();
+$("#wl-cols-btn").addEventListener("click", () => $("#wl-cols-menu").classList.toggle("hidden"));
+$("#wl-cols-menu").addEventListener("change", (e) => {
+  const cb = e.target.closest("input[data-wl-col]");
+  if (!cb) return;
+  toggleWlCol(cb.dataset.wlCol, cb.checked);
+});
+document.addEventListener("click", (e) => {
+  // klik mimo dropdown ho zavře
+  const wrap = $("#wl-cols-wrap");
+  if (wrap && !wrap.classList.contains("hidden") && !wrap.contains(e.target)) {
+    $("#wl-cols-menu").classList.add("hidden");
+  }
 });
 
 // Seřazení portfolia kliknutím na záhlaví.

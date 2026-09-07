@@ -154,13 +154,22 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 3. ~~**`divtrack scan` do web GUI**~~ — hotovo 2026-09-07: tlačítko „🎯 Najít nákupní příležitosti“, `POST /api/scan`, klikací výsledky
 4. ~~**Grafy**~~ — hotovo 2026-09-07: vanilla SVG line chart ceny (365 dní) + sloupcový graf výplat v detailní kartě, lazy-load přes `GET /api/history/<TICKER>`
 5. ~~**Valuační metriky + TWR/IRR + tooltipy**~~ — hotovo 2026-09-07: P/B, Graham číslo, Peter Lynch PEG, DCF rozklad v detailní kartě; srovnávací tabulka +5 sortable sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG); portfolio TWR % p.a. + IRR % p.a. z transakční historie (`portfolio_transactions`); vysvětlovky pod kurzorem myši na všech metrikách
-6. **Rozšíření FMP fallback** — bez klíče běží jen yfinance; zvážit volitelný druhý provider
+6. ~~**Rozšíření FMP fallback**~~ — hotovo 2026-09-07: druhý provider Tiingo (10 000 volání/den), chain FMP → Tiingo → yfinance, ceny primárně Tiingo
 7. **`disallow_untyped_defs = true`** v mypy po Fázi 4+ (nyní postupné zavádění)
 8. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
 
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — watchlist tabulka: záložky pohledů + sloučené buňky + typografie
+- **Motivace**: 14 sloupců vedle sebe se na běžném monitoru bez ořezání nevejde; čísla nesedly pod sebou.
+- **Záložky nad tabulkou** (`index.html` + `app.js`): fixní sloupce ★ Ticker / Název (sloučené) / Sektor / Cena+Změna (sloučené) jsou vždy viditelné; zbytek se přepíná: **Dividendy** (DPS TTM, Yield %, Net yield %, 5R růst, Série let, Příští div.), **Cena a volatilita** (Objem, 52t rozsah, Drawdown %), **Vše / Vlastní** (vše + dropdown „Sloupce“ — zapnutí/vypnutí libovolného sloupce, stav v `localStorage`).
+- **Sloučené dvouřádkové buňky**: ticker+název (název drobně tlumeně pod), cena+změna (absolutní + % změna barevně pod cenou), 52t rozsah = mini range-bar (tečka na lince mezi min/max) + `$lo – $hi` + percentil 52t, příští dividenda = datum nahoře / částka pod.
+- **Typografie a zarovnání**: `font-variant-numeric: tabular-nums` na celé tabulce; text doleva, čísla/částky/procenta doprava (včetně záhlaví), data a ikony na střed; zkrácené popisky záhlaví bez zalamování („5R růst“, „Příští div.“).
+- **Vizuál**: padding řádků 10px 14px, `border-bottom` mezi řádky, hover `#1a1a1a` (dark) / jemný šedý (light), sektor jako šedý badge/pilulka.
+- **Implementace**: sloupce definovány datově (`WL_COLS` + `WL_TABS`) — render hlavičky i řádků z jedné definice; seřazení přes delegovaný listener na `<thead>` (hlavička se s pohledem překresluje); sloučené sloupce mají `sortKey` (seřadí podle primárního údaje).
+- **Ověření**: Playwright headless — 3 záložky přepínají správně, dropdown Sloupce skryje/zobrazí sloupec (13→12), seřazení funguje, computed style: číselné sloupce `text-align: right` + `tabular-nums`, žádná JS chyba. Celkem **312 passed**, ruff clean, mypy clean.
 
 ### 2026-09-07 — Tiingo jako druhý data provider (ceny primárně, dividendy v chainu)
 - **Motivace**: Yahoo Finance má přísné limity synchronizace; Tiingo nabízí 10 000 volání/den.
