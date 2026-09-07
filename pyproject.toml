@@ -62,7 +62,7 @@ ignore = [
 "tests/*" = ["B011"]  # assert False v testech je legitimní
 
 # ---------------------------------------------------------------------------
-# Mypy — základní typová kontrola (zatím mimo CI, viz workflow)
+# Mypy — typová kontrola (běží i v CI, viz .github/workflows/ci.yml)
 # ---------------------------------------------------------------------------
 [tool.mypy]
 mypy_path = "src"

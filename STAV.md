@@ -145,8 +145,9 @@ oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/script
 a **mypy `disallow_untyped_defs = true`** (posledních 4 chybějících anotací doplněno).
 **Tiingo ověřeno proti živému API** — klíč nastaven, opraveny 3 odchylky od specifikace
 (auth Token ne Bearer, ceny na `/prices`, dividendy z `divCash` v barech); live sync KO
-napsal 40 dividendových záznamů. Další kandidát: **UP (pyupgrade) ruff pravidla**
-(backlog bod 8, ~400 mechanických modernizací).
+napsal 40 dividendových záznamů. **UP (pyupgrade) ruff pravidla** — 515 mechanických
+modernizací anotací ve 26 souborech, UP zapnuto v config. **Celý backlog (8 bodů) hotový.**
+Další kandidáti: viz backlog níže (nové položky po dokončení původních).
 
 Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git log -3`.
 
@@ -161,11 +162,21 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 5. ~~**Valuační metriky + TWR/IRR + tooltipy**~~ — hotovo 2026-09-07: P/B, Graham číslo, Peter Lynch PEG, DCF rozklad v detailní kartě; srovnávací tabulka +5 sortable sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG); portfolio TWR % p.a. + IRR % p.a. z transakční historie (`portfolio_transactions`); vysvětlovky pod kurzorem myši na všech metrikách
 6. ~~**Rozšíření FMP fallback**~~ — hotovo 2026-09-07: druhý provider Tiingo (10 000 volání/den), chain FMP → Tiingo → yfinance, ceny primárně Tiingo; **ověřeno proti živému API** (klíč nastaven, opraveny odchylky od specifikace — viz log níže)
 7. ~~**`disallow_untyped_defs = true`** v mypy~~ — hotovo 2026-09-07: doplněny poslední 4 chybějící anotace (`data/watchlist.py`, `gui/app.py`), příznak přepnut na true
-8. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
+8. ~~**UP (pyupgrade) ruff pravidla**~~ — hotovo 2026-09-07: 515 mechanických modernizací ve 26 souborech (`Optional[X]`→`X | None`, `List/Dict/Tuple`→`list/dict/tuple`, `Iterator`→`collections.abc`), UP zapnuto v ruff config
+9. **GitHub remote + push** — CI workflow (`.github/workflows/ci.yml`: ruff + mypy + pytest na matici 3.10/3.12/3.13) už existuje, ale repo nemá `git remote` → pipeline se nikdy nespustila; stačí přidat remote a pushnout
+10. **Dividendový kalendář bez FMP** — Tiingo z `divCash` umí jen historii; buď odhad příští výplaty z frekvence, nebo `/distributions` endpoint (beta plán)
+11. **Noční sync s `--backfill`** — `divtrack_nightly_sync.sh` volá `divtrack sync` bez flagu `--backfill`, takže 52tídní percentil/drawdown + TWR/IRR se doplní jen ručně; přidat `--backfill` do nočního spouštění
 
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — UP (pyupgrade) ruff pravidla (backlog bod 8 hotovo)
+- **Motivace**: příznak byl záměrně vypnutý „~400 mechanických modernizací jako samostatný commit“; po dokončení ostatních backlog bodů na něj přišlo.
+- **Změny** (515 ve 26 souborech, čistě mechanické): `Optional[X]` → `X | None` (UP045/UP007), `List/Dict/Tuple/Set` → `list/dict/tuple/set` (UP006), `Iterator` přesunut z `typing` do `collections.abc` (UP037), vyčištěny nevyužité typing importy (F401) a opraveno řazení importů (I001).
+- **Konfigurace**: `"UP"` přidáno do `[tool.ruff.lint] select` — modernizace se teď udržuje; starý komentář „záměrně VYPNUTO“ odstraněn.
+- **Backlog doplněn** o 3 nové kandidáty (9–11): GitHub remote + push (CI workflow už existuje, jen chybí remote), dividendový kalendář bez FMP, noční sync s `--backfill`.
+- **Ověření**: ruff clean (s UP zapnutým), mypy clean (`mypy` i `mypy src` jako v CI), **314 passed**. Commit `51342b7`.
 
 ### 2026-09-07 — Tiingo ověřeno proti živému API + oprava 3 odchylek od specifikace
 - **Motivace**: uživatel dodal `TIINGO_API_KEY` (uloženo přes `divtrack config set` do `~/.cache/dividend-tracker/.env`). Live test KO prozradil, že implementace podle OpenAPI spec se liší od reálného chování API.
