@@ -103,10 +103,12 @@ def _calendar_rows_from_fmp(ticker: str, items: List[Dict[str, Any]]) -> List[Di
 def _dividend_rows_from_tiingo(
     ticker: str, items: List[Dict[str, Any]]
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Normalizuje Tiingo ``corporate-actions/{ticker}/dividends`` na řádky pro DB.
+    """Normalizuje Tiingo dividendový payload (exDate/distribution) na řádky pro DB.
 
-    Tiingo vrací i budoucí distribuce (exDate > dnes) — ty patří do kalendáře,
-    ne do historie. Frekvence se mapuje přes :data:`tiingo._FREQUENCY_MAP`.
+    Zdroj je pole ``divCash`` v cenových barech (free plán nemá samostatný
+    dividendový endpoint — viz :mod:`dividend_tracker.data.tiingo`). Budoucí
+    distribuce se z historie nedají odvodit, takže kalendář bývá prázdný.
+    Frekvence se mapuje přes :data:`tiingo._FREQUENCY_MAP` (z divCash je None).
     """
     from .tiingo import _FREQUENCY_MAP
 
@@ -134,14 +136,14 @@ def _dividend_rows_from_tiingo(
 
 
 def sync_via_tiingo(tiingo: TiingoCacheClient, db: Database, ticker: str) -> None:
-    """Stáhne dividendovou historii + budoucí výplaty z Tiingo (1 volání na ticker).
+    """Stáhne dividendovou historii z Tiingo (1 volání na ticker — divCash v barech).
 
     Profil společnosti se stahuje jen při prvním syncu tickera (2. volání),
-    aby se limit šetřil — Tiingo metadata neobsahují sektor, proto se doplní
-    jen name/currency/exchange a zbytek nechá na dalším provideru / yfinance.
+    aby se limit šetřil — Tiingo metadata neobsahují sektor ani měnu, proto se
+    doplní jen name/exchange a zbytek nechá na dalším provideru / yfinance.
     """
     tk = ticker.upper()
-    hist_rows, cal_rows = _dividend_rows_from_tiingo(tk, tiingo.get_dividends(tk))
+    hist_rows, cal_rows = _dividend_rows_from_tiingo(tk, tiingo.get_dividend_history(tk))
 
     stock = db.get_stock(tk)
     if stock is None:  # první sync — doplnit základní profil (1 volání navíc)

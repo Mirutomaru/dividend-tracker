@@ -122,11 +122,12 @@ def test_all_providers_fail_keeps_stale_cache(db, monkeypatch):
 
 
 def test_no_api_key_uses_yfinance_fallback(db, monkeypatch):
-    """Bez FMP klíče → fallback na yfinance (mockovaný)."""
+    """Bez API klíčů (FMP i Tiingo) → fallback na yfinance (mockovaný)."""
     import dividend_tracker.data.sync as sync_mod
 
     called = []
     monkeypatch.delenv("FMP_API_KEY", raising=False)
+    monkeypatch.delenv("TIINGO_API_KEY", raising=False)  # testy CLI/web načtou reálný .env
     monkeypatch.setattr(
         sync_mod, "sync_via_yfinance", lambda db_, tk: called.append(tk) or db_.mark_dividend_sync(tk)
     )

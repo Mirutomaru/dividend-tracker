@@ -6,11 +6,15 @@ Tiingo doplňuje yfinance jako zdroj s **přísným, ale velkým denním limitem
 před každým voláním se kontroluje zbývající počet a při vyčerpání se sync
 přepne na yfinance fallback.
 
-Endpointy (https://www.tiingo.com/documentation):
-- ``GET /tiingo/daily/{ticker}`` — metadata tickeru (bez datových parametrů)
-  nebo denní OHLCV bary s ``startDate``/``endDate`` (YYYY-MM-DD).
-- ``GET /tiingo/corporate-actions/{ticker}/dividends`` — kompletní historie
-  distribucí včetně budoucích (exDate, paymentDate, recordDate, distribution).
+Endpointy (ověřeno proti živému API 2026-09-07):
+- ``GET /tiingo/daily/{ticker}`` — metadata tickeru (name, exchangeCode; měnu
+  neobsahuje). S datovými parametry vrací STEJNÉ meta, ne bary!
+- ``GET /tiingo/daily/{ticker}/prices?startDate=…&endDate=…`` — denní OHLCV bary
+  včetně pole ``divCash`` (výplata na ex-date) a ``splitFactor``. Bez parametru
+  vrátí jen poslední bar.
+- Dividendová historie se odvozuje z ``divCash`` v cenových barech — samostatný
+  endpoint ``corporate-actions/{ticker}/distributions`` je na free plánu 403
+  (beta/enterprise), starý ``…/dividends`` vrací 404.
 
 API klíč se čte z proměnné prostředí ``TIINGO_API_KEY``; bez něj klient hlásí
 nekonfiguraci a volající přepne na jiný provider. Žádné nové závislosti —
@@ -75,9 +79,9 @@ def _daily_limit() -> int:
 
 
 def _get_json(url: str, api_key: str, timeout: float = 15.0) -> Any:
-    """GET s Bearer autentizací; 429 → :class:`TiingoLimitExceeded`, ostatní HTTP → :class:`TiingoError`."""
+    """GET s Token autentizací; 429 → :class:`TiingoLimitExceeded`, ostatní HTTP → :class:`TiingoError`."""
     req = urllib.request.Request(
-        url, headers={"Authorization": f"Bearer {api_key}", "User-Agent": "dividend-tracker/0.1"}
+        url, headers={"Authorization": f"Token {api_key}", "User-Agent": "dividend-tracker/0.1"}
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -148,29 +152,70 @@ class TiingoCacheClient:
         return data
 
     def get_meta(self, ticker: str) -> Dict[str, Any]:
-        """Metadata tickeru (name, currency, exchange). Prázdný dict = neznámý symbol."""
+        """Metadata tickeru (name, exchange). Prázdný dict = neznámý symbol.
+
+        Tiingo meta neobsahuje měnu — volající doplní výchozí hodnotu.
+        Exchange je v poli ``exchangeCode`` (např. „NYSE“).
+        """
         data = self._fetch(f"daily/{ticker.strip().upper()}")
-        if isinstance(data, list):  # některé verze API vrátí bary i bez datových parametrů
+        if not isinstance(data, dict):  # list bary / jiná šmeřda → neznámý symbol
             return {}
-        return data if isinstance(data, dict) else {}
+        out: Dict[str, Any] = {"name": data.get("name")}
+        exchange = data.get("exchangeCode") or data.get("exchange")
+        if exchange:
+            out["exchange"] = exchange
+        currency = data.get("currency")
+        if currency:
+            out["currency"] = currency
+        return out
 
     def get_price_history(
         self, ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Denní OHLCV bary (nejstarší první). ``start_date``/``end_date`` jako ISO YYYY-MM-DD."""
-        params: Dict[str, Any] = {}
-        if start_date:
-            params["startDate"] = start_date
+        """Denní OHLCV bary (nejstarší první) z ``/daily/{T}/prices``.
+
+        ``start_date``/``end_date`` jako ISO YYYY-MM-DD. Bez ``start_date`` se
+        stáhne posledních 10 let — Tiingo bez parametru vrátí jen poslední bar,
+        takže výchozí okno je záměrné. Bary obsahují i ``divCash`` a
+        ``splitFactor`` (používá :meth:`get_dividend_history`).
+        """
+        tk = ticker.strip().upper()
+        if not start_date:
+            start_date = (date.today() - timedelta(days=3650)).isoformat()
+        params: Dict[str, Any] = {"startDate": start_date}
         if end_date:
             params["endDate"] = end_date
-        data = self._fetch(f"daily/{ticker.strip().upper()}", params)
+        data = self._fetch(f"daily/{tk}/prices", params)
         bars = data if isinstance(data, list) else []
         return sorted(bars, key=lambda b: str(b.get("date", "")))
 
-    def get_dividends(self, ticker: str) -> List[Dict[str, Any]]:
-        """Kompletní historie distribucí včetně budoucích (exDate, distribution, …)."""
-        data = self._fetch(f"corporate-actions/{ticker.strip().upper()}/dividends")
-        return data if isinstance(data, list) else []
+    def get_dividend_history(self, ticker: str, start_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Dividendová historie odvozená z pole ``divCash`` v denních barech.
+
+        Free plán Tiingo nemá samostatný dividendový endpoint (viz modulový
+        docstring), proto čteme ex-date přímo z cenové historie — 1 volání a
+        data konzistentní s adjClose. Výstup má stejný tvar jako starý
+        corporate-actions payload (exDate/distribution), takže normalizace v
+        :func:`dividend_tracker.data.sync._dividend_rows_from_tiingo` funguje
+        beze změny; payment/record date a frekvence bývají ``None``.
+        """
+        bars = self.get_price_history(ticker, start_date=start_date)
+        items: List[Dict[str, Any]] = []
+        for bar in bars:
+            amount = bar.get("divCash")
+            if not isinstance(amount, (int, float)) or amount <= 0:
+                continue
+            ex_date = str(bar.get("date", ""))[:10]
+            items.append(
+                {
+                    "exDate": ex_date,
+                    "paymentDate": None,  # divCash neuvádí payment/record date
+                    "recordDate": None,
+                    "distribution": amount,
+                    "distributionFreqency": None,  # frekvence se z barech nedá odvodit
+                }
+            )
+        return items
 
 
 def recent_window(days: int = 10) -> tuple[str, str]:

@@ -53,7 +53,7 @@ def test_usage_and_limit_tracking(db, monkeypatch):
 
     # Každé volání se zapíše do čítače.
     for _ in range(3):
-        client.get_dividends("KO")
+        client.get_dividend_history("KO")
     u = client.usage()
     assert u["calls_used"] == 3
     assert u["daily_limit"] == DAILY_LIMIT
@@ -61,9 +61,9 @@ def test_usage_and_limit_tracking(db, monkeypatch):
 
     # Vyčerpání limitu → další volání zvedne TiingoLimitExceeded.
     for _ in range(DAILY_LIMIT - 3):
-        client.get_dividends("KO")
+        client.get_dividend_history("KO")
     with pytest.raises(TiingoLimitExceeded):
-        client.get_dividends("KO")
+        client.get_dividend_history("KO")
 
 
 def test_429_raises_limit_exceeded(monkeypatch):
@@ -90,6 +90,37 @@ def test_401_raises_error(monkeypatch):
     monkeypatch.setattr("dividend_tracker.data.tiingo.urllib.request.urlopen", fake_urlopen)
     with pytest.raises(TiingoError):
         tiingo_mod._get_json("https://api.tiingo.com/tiingo/daily/KO", "bad-key")
+
+
+def test_auth_header_uses_token_scheme(monkeypatch):
+    """Tiingo očekává ``Authorization: Token <klíč>`` — Bearer vrací 403 „Please supply a token“."""
+    import json as _json
+
+    import dividend_tracker.data.tiingo as tiingo_mod
+
+    captured = {}
+
+    class FakeResp:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return self._payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    def fake_urlopen(req, timeout=None):
+        captured["auth"] = req.get_header("Authorization")
+        return FakeResp(_json.dumps({"ticker": "KO"}).encode())
+
+    monkeypatch.setattr(tiingo_mod.urllib.request, "urlopen", fake_urlopen)
+    data = tiingo_mod._get_json("https://api.tiingo.com/tiingo/daily/KO", "sekret")
+    assert captured["auth"] == "Token sekret"
+    assert data == {"ticker": "KO"}
 
 
 def test_recent_window_covers_today():
@@ -151,6 +182,36 @@ def test_normalize_skips_invalid_items():
     assert len(hist_rows) == 1 and not cal_rows
 
 
+def test_dividend_history_extracted_from_bars(db, monkeypatch):
+    """get_dividend_history čte ex-date z pole divCash v cenových barech."""
+    import dividend_tracker.data.tiingo as tiingo_mod
+
+    today = date.today()
+    bars = [
+        {"date": (today - timedelta(days=90)).isoformat() + "T00:00:00+00:00", "close": 60.0, "divCash": 1.94},
+        {"date": (today - timedelta(days=30)).isoformat() + "T00:00:00+00:00", "close": 61.0, "divCash": 2.05},
+        {"date": today.isoformat() + "T00:00:00+00:00", "close": 62.0, "divCash": 0.0},
+    ]
+
+    def fake(url, key, timeout=15.0):
+        assert "/daily/KO/prices" in url and "startDate=" in url
+        return bars
+
+    monkeypatch.setenv("TIINGO_API_KEY", "test-key")
+    monkeypatch.setattr(tiingo_mod, "_get_json", fake)
+
+    client = TiingoCacheClient(db)
+    items = client.get_dividend_history("KO")
+    assert [i["exDate"] for i in items] == [
+        (today - timedelta(days=90)).isoformat(),
+        (today - timedelta(days=30)).isoformat(),
+    ]
+    assert [i["distribution"] for i in items] == pytest.approx([1.94, 2.05])
+    # divCash nezná payment/record date ani frekvenci — normalizace je zvládne.
+    hist_rows, cal_rows = _dividend_rows_from_tiingo("KO", items)
+    assert len(hist_rows) == 2 and not cal_rows
+
+
 # ------------------------------------------------------------------ sync_via_tiingo
 
 def test_sync_via_tiingo_writes_db(db, monkeypatch):
@@ -158,13 +219,14 @@ def test_sync_via_tiingo_writes_db(db, monkeypatch):
 
     today = date.today()
     past = (today - timedelta(days=30)).isoformat()
-    future = (today + timedelta(days=20)).isoformat()
-    dividends = [_tiingo_dividend(past, 1.94), _tiingo_dividend(future, 1.98)]
 
     def fake(url, key, timeout=15.0):
-        if url.startswith("https://api.tiingo.com/tiingo/daily/KO"):
-            return {"name": "Coca-Cola Co.", "currency": "USD", "exchange": "NYSE"}
-        return dividends  # corporate-actions/.../dividends
+        if "/prices" in url:  # bary — dividendy se odvozují z pole divCash
+            return [
+                {"date": f"{past}T00:00:00+00:00", "close": 60.0, "divCash": 1.94},
+                {"date": today.isoformat() + "T00:00:00+00:00", "close": 61.0, "divCash": 0.0},
+            ]
+        return {"name": "Coca-Cola Co.", "exchangeCode": "NYSE"}  # meta (bez měny)
 
     monkeypatch.setenv("TIINGO_API_KEY", "test-key")
     monkeypatch.setattr(tiingo_mod, "_get_json", fake)
@@ -176,11 +238,12 @@ def test_sync_via_tiingo_writes_db(db, monkeypatch):
 
     stock = db.get_stock("KO")
     assert stock is not None and stock["name"] == "Coca-Cola Co."
+    assert stock["exchange"] == "NYSE"  # exchangeCode → exchange
     divs = db.get_dividends("KO")
-    assert len(divs) == 1 and divs[0]["ex_date"] == past  # jen historie, ne budoucí
-    cal = db.get_calendar("KO")
-    assert any(r["ticker"] == "KO" for r in cal)
-    # Čítač: dividendy (1) + meta při prvním syncu (1).
+    assert len(divs) == 1 and divs[0]["ex_date"] == past
+    cal = [r for r in db.get_calendar("KO") if r["ticker"] == "KO"]
+    assert not cal  # z historických barech se budoucí výplata odvodit nedá
+    # Čítač: ceny s divCash (1) + meta při prvním syncu (1).
     assert client.usage()["calls_used"] == 2
 
 
@@ -191,7 +254,13 @@ def test_sync_via_tiingo_no_meta_call_when_stock_exists(db, monkeypatch):
 
     def fake(url, key, timeout=15.0):
         calls.append(url)
-        return [_tiingo_dividend((date.today() - timedelta(days=30)).isoformat(), 1.94)]
+        return [
+            {
+                "date": (date.today() - timedelta(days=30)).isoformat() + "T00:00:00+00:00",
+                "close": 60.0,
+                "divCash": 1.94,
+            }
+        ]
 
     monkeypatch.setenv("TIINGO_API_KEY", "test-key")
     monkeypatch.setattr(tiingo_mod, "_get_json", fake)
@@ -201,16 +270,24 @@ def test_sync_via_tiingo_no_meta_call_when_stock_exists(db, monkeypatch):
     db.upsert_stock("KO", name="Coca-Cola Co.")  # profil už existuje → meta se netaží
     client = TiingoCacheClient(db)
     sync_via_tiingo(client, db, "KO")
-    assert len(calls) == 1 and "corporate-actions" in calls[0]
+    assert len(calls) == 1 and "/daily/KO/prices" in calls[0]
 
 
 # ------------------------------------------------------------------ provider chain
+
+def _tiingo_bars_with_dividend(ex_date: str, amount: float):
+    """Denní bary, z nichž se dividendová historie odvozuje přes divCash."""
+    return [
+        {"date": f"{ex_date}T00:00:00+00:00", "close": 60.0, "divCash": amount},
+        {"date": date.today().isoformat() + "T00:00:00+00:00", "close": 61.0, "divCash": 0.0},
+    ]
+
 
 def test_chain_uses_tiingo_when_fmp_missing(db, monkeypatch):
     import dividend_tracker.data.tiingo as tiingo_mod
 
     def fake(url, key, timeout=15.0):
-        return [_tiingo_dividend((date.today() - timedelta(days=30)).isoformat(), 1.94)]
+        return _tiingo_bars_with_dividend((date.today() - timedelta(days=30)).isoformat(), 1.94)
 
     monkeypatch.delenv("FMP_API_KEY", raising=False)
     monkeypatch.setenv("TIINGO_API_KEY", "test-key")
@@ -233,7 +310,7 @@ def test_chain_fmp_error_falls_to_tiingo(db, monkeypatch):
     import dividend_tracker.data.tiingo as tiingo_mod
 
     def fake(url, key, timeout=15.0):
-        return [_tiingo_dividend((date.today() - timedelta(days=30)).isoformat(), 1.94)]
+        return _tiingo_bars_with_dividend((date.today() - timedelta(days=30)).isoformat(), 1.94)
 
     monkeypatch.setenv("FMP_API_KEY", "test-key")
     monkeypatch.setenv("TIINGO_API_KEY", "test-key")
