@@ -72,4 +72,4 @@ packages = ["dividend_tracker"]
 python_version = "3.10"
 ignore_missing_imports = true   # yfinance nemá stuby
 warn_unused_ignores = false
-disallow_untyped_defs = false   # postupné zavádění — cíl: true po Fázi 4+
+disallow_untyped_defs = true    # hotovo 2026-09-07 — všechny funkce mají anotace

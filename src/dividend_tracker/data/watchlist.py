@@ -14,14 +14,17 @@ import json
 import logging
 import time
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .db import Database
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 log = logging.getLogger(__name__)
 
 
-def _build_series(rows: List[Dict[str, Any]]):
+def _build_series(rows: List[Dict[str, Any]]) -> Optional[pd.Series]:
     """Sestaví ``pd.Series`` (DatetimeIndex → amount) z řádků dividends_history."""
     import pandas as pd
 
@@ -46,7 +49,7 @@ def _build_series(rows: List[Dict[str, Any]]):
     return s[~s.index.duplicated(keep="last")]
 
 
-def _ttm(series) -> float:
+def _ttm(series: Optional[pd.Series]) -> float:
     """TTM DPS — součet plateb v posledních 365 dnech od poslední výplaty."""
     if series is None or len(series) == 0:
         return 0.0

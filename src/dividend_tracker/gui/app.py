@@ -234,7 +234,7 @@ class DividendTrackerApp:
 
     # ------------------------------ detail -----------------------------------------
 
-    def _tree_find(self, tk_: str):
+    def _tree_find(self, tk_: str) -> str | None:
         for iid in self.tree.get_children():
             vals = self.tree.item(iid)["values"]
             if vals and vals[0] == tk_:
@@ -248,7 +248,7 @@ class DividendTrackerApp:
             values = [tk_, "—", "—", "—", partial.get("score", "…"), partial.get("safety", "…"), "…", status[:120]]
             self.tree.insert("", tk.END, values=values)
 
-    def _on_tree_select(self, _event=None) -> None:
+    def _on_tree_select(self, _event: tk.Event | None = None) -> None:
         sel = self.tree.selection()
         if not sel:
             return

@@ -139,9 +139,11 @@ git status                        # → clean (main)
 > Udržuj tuhle sekci vždy aktuální — co je v letu, kde jsme, jak pokračovat.
 
 **Nic v letu** (2026-09-07) — hotovo: „web GUI správa watchlisty/portfolia“,
-„cron noční sync“, „scan v web GUI“, **grafy**, **valuační metriky + TWR/IRR + tooltipy**
-a oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/scripts/`,
-`divtrack sync` bez argů teď zahrnuje i trvalou watchlistu). Další kandidát: **FMP fallback** (backlog bod 6).
+„cron noční sync“, „scan v web GUI“, **grafy**, **valuační metriky + TWR/IRR + tooltipy**,
+oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/scripts/`,
+`divtrack sync` bez argů teď zahrnuje i trvalou watchlistu), FMP fallback (Tiingo)
+a **mypy `disallow_untyped_defs = true`** (posledních 4 chybějících anotací doplněno).
+Další kandidát: **UP (pyupgrade) ruff pravidla** (backlog bod 8, ~400 mechanických modernizací).
 
 Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git log -3`.
 
@@ -155,12 +157,18 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 4. ~~**Grafy**~~ — hotovo 2026-09-07: vanilla SVG line chart ceny (365 dní) + sloupcový graf výplat v detailní kartě, lazy-load přes `GET /api/history/<TICKER>`
 5. ~~**Valuační metriky + TWR/IRR + tooltipy**~~ — hotovo 2026-09-07: P/B, Graham číslo, Peter Lynch PEG, DCF rozklad v detailní kartě; srovnávací tabulka +5 sortable sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG); portfolio TWR % p.a. + IRR % p.a. z transakční historie (`portfolio_transactions`); vysvětlovky pod kurzorem myši na všech metrikách
 6. ~~**Rozšíření FMP fallback**~~ — hotovo 2026-09-07: druhý provider Tiingo (10 000 volání/den), chain FMP → Tiingo → yfinance, ceny primárně Tiingo
-7. **`disallow_untyped_defs = true`** v mypy po Fázi 4+ (nyní postupné zavádění)
+7. ~~**`disallow_untyped_defs = true`** v mypy~~ — hotovo 2026-09-07: doplněny poslední 4 chybějící anotace (`data/watchlist.py`, `gui/app.py`), příznak přepnut na true
 8. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
 
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — mypy `disallow_untyped_defs = true` (backlog bod 7 hotovo)
+- **Motivace**: příznak byl vypnutý „postupné zavádění“; kontrolou se ukázalo, že zbývá jen 4 chybějících anotací ve 2 souborech — dokončit bylo levnější než nechat viset.
+- **Opravy**: `data/watchlist.py` — `_build_series() -> Optional[pd.Series]` (pandas import pod `TYPE_CHECKING`, runtime import v těle zůstal), `_ttm(series: Optional[pd.Series])`. `gui/app.py` — `_tree_find() -> str | None`, `_on_tree_select(_event: tk.Event | None = None)`.
+- **Přepnutí**: `[tool.mypy] disallow_untyped_defs = true` v pyproject.toml.
+- **Ověření**: mypy clean (35 souborů), ruff clean, **312 passed**.
 
 ### 2026-09-07 — watchlist tabulka: záložky pohledů + sloučené buňky + typografie
 - **Motivace**: 14 sloupců vedle sebe se na běžném monitoru bez ořezání nevejde; čísla nesedly pod sebou.
