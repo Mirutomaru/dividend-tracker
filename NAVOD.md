@@ -220,6 +220,9 @@ Co umí přímo v prohlížeči (bez CLI):
 - **🎯 Najít nákupní příležitosti** — ekvivalent CLI `divtrack scan`: analyzuje tickery
   z pole (nebo celou trvalou watchlistu, pokud je prázdné) a ukáže jen ty se zeleným
   bezpečnostním flagem a signálem BUY_ZONE. Kliknutím na výsledek skočíš k detailní kartě.
+- **Grafy v detailní kartě** — každá analytická karta automaticky načte dva grafy:
+  průběh ceny za posledních 365 dní (čára s aktuální cenou) a sloupcový graf výplat
+  dividend (posledních 12). Data se čtou z lokální DB, takže fungují i offline.
 
 ### Tkinter GUI (desktop)
 

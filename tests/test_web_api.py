@@ -850,3 +850,52 @@ def scan_server(tmp_path):
     yield f"http://{host}:{port}"
     httpd.shutdown()
     httpd.server_close()
+
+
+# ------------------------------------------------------------------ history (grafy v kartě)
+
+@pytest.fixture()
+def history_server(tmp_path):
+    """Server s historií cen a výplat pro KO (pro testy /api/history)."""
+    from datetime import date, timedelta
+
+    from dividend_tracker.data.db import Database
+
+    db = Database(tmp_path / "history.db")
+    today = date.today()
+    # 3 denní snapshoty cen (starší → novější)
+    for i in range(3):
+        d = (today - timedelta(days=2 - i)).isoformat()
+        db.record_price_snapshot("KO", d, 60.0 + i)
+    # 4 výplaty dividend (starší → novější)
+    for i, amt in enumerate((1.00, 1.05, 1.10, 1.15)):
+        ex = (today - timedelta(days=90 * (3 - i))).isoformat()
+        db.upsert_dividend("KO", ex, amt)
+    httpd = create_app(port=0, db_path=db.path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    host, port = httpd.server_address[:2]
+    yield f"http://{host}:{port}"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_history_returns_prices_and_dividends(history_server):
+    status, body = _request(history_server, "GET", "/api/history/KO")
+    assert status == 200 and body["ticker"] == "KO"
+    # ceny: nejstarší první (server vrací vzestupně pro graf)
+    assert [p["close"] for p in body["prices"]] == [60.0, 61.0, 62.0]
+    assert all("date" in p for p in body["prices"])
+    # dividendy: nejstarší první
+    assert [d["amount"] for d in body["dividends"]] == [1.00, 1.05, 1.10, 1.15]
+
+
+def test_history_empty_for_unknown_ticker(server):
+    status, body = _request(server, "GET", "/api/history/NOPE")
+    assert status == 200 and body["prices"] == [] and body["dividends"] == []
+
+
+def test_history_invalid_ticker_400(server):
+    # "!" není v povolené množině [A-Z0-9.-] → 400 (i po upper())
+    status, body = _request(server, "GET", "/api/history/BAD!TICKER")
+    assert status == 400 and "error" in body

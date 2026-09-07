@@ -413,6 +413,19 @@ tr.in-zone td:first-child::before { content: "●"; color: var(--green); margin-
 .scan-row .td-ticker { font-size: 15px; }
 .scan-empty { color: var(--text-secondary); padding: 6px 2px; }
 
+/* ---------------- Grafy (vanilla SVG) ---------------- */
+
+.chart-block { margin-top: 10px; }
+.chart { display: block; width: 100%; height: auto; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart-area { fill: var(--accent); opacity: 0.12; }
+.chart-dot { fill: var(--accent); }
+.chart-bar { fill: var(--green); opacity: 0.85; }
+.chart-grid { stroke: var(--border); stroke-width: 1; }
+.chart-axis { font-size: 11px; fill: var(--text-secondary); }
+.chart-val { font-weight: 600; fill: var(--text); }
+.chart-empty { color: var(--text-secondary); font-size: 13px; padding: 8px 2px; }
+
 /* ---------------- Portfolio ---------------- */
 
 .pf-summary {

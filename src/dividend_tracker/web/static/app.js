@@ -949,6 +949,13 @@ function renderTickerCard(entry) {
     </div>`;
   }
 
+  /* --- grafy (lazy-load z lokální DB) --- */
+  const chartsHtml = `<div class="metric-section">
+    <div class="section-title">Grafy</div>
+    <div class="chart-block" id="price-chart-${escapeHtml(r.ticker)}"><p class="chart-empty">Načítám historii cen…</p></div>
+    <div class="chart-block" id="dividend-chart-${escapeHtml(r.ticker)}"><p class="chart-empty">Načítám historii dividend…</p></div>
+  </div>`;
+
   const gaps = (r.data_gaps || []).length ? `<p style="font-size:12px;color:var(--text-secondary);padding:0 28px 16px">Chybějící data: ${escapeHtml(r.data_gaps.join(", "))}</p>` : "";
 
   return `<article class="card ticker-card" id="detail-${escapeHtml(r.ticker)}">
@@ -971,8 +978,123 @@ function renderTickerCard(entry) {
     ${valuationHtml}
     ${healthHtml}
     ${fvHtml}
+    ${chartsHtml}
     ${gaps}
   </article>`;
+}
+
+/* ------------------------------ grafy (vanilla SVG, lazy-load) ------------------------------ */
+
+const CHART_W = 720;   // viewBox šířka — SVG se škáluje na šířku karty
+const CHART_H = 210;
+const CHART_PAD = { top: 14, right: 14, bottom: 26, left: 52 };
+
+function _chartScale(values) {
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || Math.abs(hi) * 0.1 || 1; // plochá řada → malý margin, aby nebyl graf degenerovaný
+  return { lo: lo - span * 0.08, hi: hi + span * 0.08 };
+}
+
+/** Line chart denních cen (posledních ~365 dní). ``prices`` = [{date, close}] starší→novější. */
+function priceChartSvg(prices) {
+  const closes = prices.map((p) => p.close);
+  if (closes.length < 2) return `<p class="chart-empty">Historie cen zatím má méně než 2 body — spusťte synchronizaci.</p>`;
+
+  const { lo, hi } = _chartScale(closes);
+  const iw = CHART_W - CHART_PAD.left - CHART_PAD.right;
+  const ih = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
+  const x = (i) => CHART_PAD.left + (i / (closes.length - 1)) * iw;
+  const y = (v) => CHART_PAD.top + (1 - (v - lo) / (hi - lo)) * ih;
+
+  const line = closes.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const area = `${line} L${x(closes.length - 1).toFixed(1)},${(CHART_PAD.top + ih).toFixed(1)} L${x(0).toFixed(1)},${(CHART_PAD.top + ih).toFixed(1)} Z`;
+
+  // 3 vodorovné mřížkové linky s popisky (max / střed / min)
+  const grid = [hi, (hi + lo) / 2, lo].map((v) => {
+    const gy = y(v).toFixed(1);
+    return `<line class="chart-grid" x1="${CHART_PAD.left}" y1="${gy}" x2="${CHART_W - CHART_PAD.right}" y2="${gy}"/>
+      <text class="chart-axis" x="${CHART_PAD.left - 8}" y="${Number(gy) + 4}" text-anchor="end">${v.toFixed(0)}</text>`;
+  }).join("");
+
+  const first = prices[0].date.slice(0, 7);   // RR-MM
+  const last = prices[prices.length - 1].date.slice(0, 7);
+  return `<svg class="chart" viewBox="0 0 ${CHART_W} ${CHART_H}" role="img" aria-label="Historie cen">
+    ${grid}
+    <path class="chart-area" d="${area}"/>
+    <path class="chart-line" d="${line}"/>
+    <circle class="chart-dot" cx="${x(closes.length - 1).toFixed(1)}" cy="${y(closes[closes.length - 1]).toFixed(1)}" r="3.5"/>
+    <text class="chart-axis" x="${CHART_PAD.left}" y="${CHART_H - 8}">${first}</text>
+    <text class="chart-axis" x="${CHART_W - CHART_PAD.right}" y="${CHART_H - 8}" text-anchor="end">${last}</text>
+  </svg>`;
+}
+
+/** Sloupcový graf výplat (DPS) — posledních 12 plateb. ``dividends`` = [{ex_date, amount}] starší→novější. */
+function dividendChartSvg(dividends) {
+  const items = dividends.slice(-12);
+  if (!items.length) return `<p class="chart-empty">Historie výplat zatím není v lokální DB — spusťte synchronizaci.</p>`;
+
+  const maxAmt = Math.max(...items.map((d) => d.amount));
+  const iw = CHART_W - CHART_PAD.left - CHART_PAD.right;
+  const ih = CHART_H - CHART_PAD.top - CHART_PAD.bottom;
+  const slot = iw / items.length;
+  const barW = Math.min(46, slot * 0.62);
+
+  const bars = items.map((d, i) => {
+    const h = maxAmt ? (d.amount / maxAmt) * ih : 0;
+    const bx = CHART_PAD.left + i * slot + (slot - barW) / 2;
+    const by = CHART_PAD.top + ih - h;
+    const label = d.ex_date.slice(5).replace("-", "/"); // MM/RR
+    return `<rect class="chart-bar" x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(2, h).toFixed(1)}" rx="4"/>
+      <text class="chart-axis chart-val" x="${(bx + barW / 2).toFixed(1)}" y="${(by - 6).toFixed(1)}" text-anchor="middle">${d.amount.toFixed(2)}</text>
+      <text class="chart-axis" x="${(bx + barW / 2).toFixed(1)}" y="${CHART_H - 8}" text-anchor="middle">${label}</text>`;
+  }).join("");
+
+  return `<svg class="chart" viewBox="0 0 ${CHART_W} ${CHART_H}" role="img" aria-label="Historie výplat dividend">
+    <line class="chart-grid" x1="${CHART_PAD.left}" y1="${(CHART_PAD.top + ih).toFixed(1)}" x2="${CHART_W - CHART_PAD.right}" y2="${(CHART_PAD.top + ih).toFixed(1)}"/>
+    ${bars}
+  </svg>`;
+}
+
+const _chartsLoaded = new Set(); // tickery, pro které už grafy načtené (ochrana proti dvojnásobnému fetchi)
+
+/** Načte historii z lokální DB a vykreslí oba grafy v kartě tickera. */
+async function loadCardCharts(ticker) {
+  if (_chartsLoaded.has(ticker)) return;
+  _chartsLoaded.add(ticker);
+  const priceEl = document.getElementById(`price-chart-${ticker}`);
+  const divEl = document.getElementById(`dividend-chart-${ticker}`);
+  if (!priceEl || !divEl) return; // karta mezitím smazaná
+
+  try {
+    const res = await fetch(`/api/history/${encodeURIComponent(ticker)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    priceEl.innerHTML = priceChartSvg(data.prices || []);
+    divEl.innerHTML = dividendChartSvg(data.dividends || []);
+  } catch {
+    // offline chyba — ukázat srozumitelný stav místo „Načítám…“ navždy
+    const msg = `<p class="chart-empty">Grafy se nepodařilo načíst (DB nedostupná).</p>`;
+    priceEl.innerHTML = msg;
+    divEl.innerHTML = msg;
+  }
+}
+
+/** Sleduje vklad nových karet do výsledků a spustí lazy-load grafů (funguje pro všechny cesty: analýza, scan, uložené reporty). */
+function observeChartCards() {
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (!(node instanceof HTMLElement)) continue;
+        const cards = node.matches?.(".ticker-card") ? [node] : [...(node.querySelectorAll?.(".ticker-card") || [])];
+        for (const card of cards) {
+          const sym = card.querySelector(".ticker-symbol");
+          if (sym && sym.textContent) loadCardCharts(sym.textContent.trim());
+        }
+      }
+    }
+  });
+  observer.observe(resultsEl, { childList: true, subtree: true });
 }
 
 function escapeHtml(s) {
@@ -1227,5 +1349,6 @@ loadWatchlist();
 loadPortfolio();
 loadAlerts();
 loadFmpStatus();
+observeChartCards(); // lazy-load grafů pro všechny karty (analýza, scan, uložené reporty)
 loadStoredReports(); // perzistentní analytické reporty (přežívají restart GUI)
 input.focus();

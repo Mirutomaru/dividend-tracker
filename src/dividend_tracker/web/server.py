@@ -307,6 +307,9 @@ class WebApp(BaseHTTPRequestHandler):
                     }
                 )
                 return
+            if path.startswith("/api/history/"):
+                self._handle_history_get(path)
+                return
             if path == "/api/export/watchlist.csv":
                 self._handle_export_watchlist_csv()
                 return
@@ -333,6 +336,31 @@ class WebApp(BaseHTTPRequestHandler):
         """Uložené analytické reporty přímo z lokální DB (bez externích volání)."""
         reports = self.db.list_reports()
         self._send_json({"reports": reports, "count": len(reports)})
+
+    def _handle_history_get(self, path: str) -> None:
+        """Historie pro grafy v detailní kartě — přímo z lokální DB (offline).
+
+        ``GET /api/history/<TICKER>`` → ``{ticker, prices: [{date, close}], dividends: [{ex_date, amount}]}``.
+        Ceny = denní snapshoty za 365 dní (nejstarší první), dividendy = celá historie
+        výplat (nejstarší první). Bez dat vrací prázdné seznamy — frontend ukáže „—“.
+        """
+        ticker = path.rsplit("/", 1)[-1].upper()
+        if not TICKER_RE.match(ticker):
+            self._send_error_json(400, f"Neplatný ticker: {ticker!r}")
+            return
+
+        prices_desc = self.db.get_price_history(ticker, days=365)
+        prices = [
+            {"date": r["date"], "close": r["close"]}
+            for r in reversed(prices_desc)
+            if r.get("close") is not None
+        ]
+        dividends_desc = self.db.get_dividends(ticker)
+        dividends = [
+            {"ex_date": r["ex_date"], "amount": r["dividend_amount"]}
+            for r in reversed(dividends_desc)
+        ]
+        self._send_json({"ticker": ticker, "prices": prices, "dividends": dividends})
 
     def _handle_portfolio(self) -> None:
         """Portfolio + cíl ročního příjmů přímo z lokální DB."""

@@ -58,6 +58,7 @@ src/dividend_tracker/
 | DELETE | `/api/portfolio/<T>` | smaže pozici z portfolia |
 | POST | `/api/income-target {amount}` | nastaví cíl ročního příjmu (0 = odebrat) |
 | GET/DELETE | `/api/reports[/<ticker>]` | uložené analytické reporty (přežívají restart) |
+| GET | `/api/history/<TICKER>` | historie cen (365 dní) + výplat pro grafy v detailní kartě (offline z DB) |
 | GET | `/api/fmp-status` | zbývající FMP volání dnes |
 | GET | `/api/export/watchlist.csv`, `/api/export/analysis/<job>.csv` | CSV exporty (BOM pro Excel) |
 
@@ -93,14 +94,17 @@ src/dividend_tracker/
 - **Scan v web GUI** — tlačítko „🎯 Najít nákupní příležitosti“ (ekvivalent CLI
   `divtrack scan`): asynchronní job přes `POST /api/scan`, filtr zelený flag + BUY_ZONE,
   prázdné pole = celá trvalá watchlista; výsledky jako klikací řádky (scroll k detailu).
+- **Grafy v detailní kartě** — vanilla SVG bez závislostí: line chart ceny za 365 dní
+  + sloupcový graf posledních 12 výplat; lazy-load přes `GET /api/history/<TICKER>`
+  (MutationObserver zachytí karty ze všech cest — analýza, scan, uložené reporty).
 - **Onboarding** — `./start.sh` (one-click: auto-install + web GUI), `install.sh`. `e80fea5`
 - **Hygiena & CI** — ruff + mypy v CI (GitHub Actions, Python 3.10/3.12/3.13),
   MIT LICENSE, NAVOD.md (praktický návod). `d0dc42f`, `78d1c60`
-- **Testy** — 270 testů, vše offline (domain + data layer s tmp DB + web API s mockem).
+- **Testy** — 273 testů, vše offline (domain + data layer s tmp DB + web API s mockem).
 
 ### Stav ověření (poslední kontrola)
 ```bash
-.venv/bin/python -m pytest        # → 270 passed
+.venv/bin/python -m pytest        # → 273 passed
 .venv/bin/ruff check src tests    # → All checks passed!
 .venv/bin/mypy                    # → Success: no issues found in 33 source files
 git status                        # → clean (main)
@@ -127,8 +131,8 @@ git status                        # → clean (main)
 > Udržuj tuhle sekci vždy aktuální — co je v letu, kde jsme, jak pokračovat.
 
 **Nic v letu** (2026-09-07) — hotovo: „web GUI správa watchlisty/portfolia“,
-„cron noční sync“ (nainstalován do crontabu, 02:30) a „scan v web GUI“.
-Další kandidát: **grafy** (backlog bod 4).
+„cron noční sync“ (nainstalován do crontabu, 02:30), „scan v web GUI“ a **grafy**
+(cena + dividendová historie v detailní kartě). Další kandidát: **FMP fallback** (backlog bod 5).
 
 Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git log -3`.
 
@@ -139,8 +143,7 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 1. ~~**Web GUI správa watchlisty + portfolia**~~ — hotovo 2026-09-07 (★ toggle, pozice, cíl příjmu)
 2. ~~**Cron noční sync**~~ — hotovo 2026-09-07: `30 2 * * *` v crontabu, log do `~/.cache/dividend-tracker/sync.log` (ověřeno `crontab -l`)
 3. ~~**`divtrack scan` do web GUI**~~ — hotovo 2026-09-07: tlačítko „🎯 Najít nákupní příležitosti“, `POST /api/scan`, klikací výsledky
-4. **Grafy** — cena + dividendová historie v detailu karty (vanilla SVG, bez závislostí);
-   data už jsou v DB (price_history, dividends_history)
+4. ~~**Grafy**~~ — hotovo 2026-09-07: vanilla SVG line chart ceny (365 dní) + sloupcový graf výplat v detailní kartě, lazy-load přes `GET /api/history/<TICKER>`
 5. **Rozšíření FMP fallback** — bez klíče běží jen yfinance; zvážit volitelný druhý provider
 6. **`disallow_untyped_defs = true`** v mypy po Fázi 4+ (nyní postupné zavádění)
 7. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
@@ -148,6 +151,13 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — hotovo „grafy v detailní kartě“
+- `web/server.py`: nový endpoint `GET /api/history/<TICKER>` → `{ticker, prices: [{date, close}], dividends: [{ex_date, amount}]}`; ceny = denní snapshoty za 365 dní (nejstarší první), dividendy = celá historie výplat (nejstarší první); neplatný ticker → 400.
+- Frontend (`app.js`): vanilla SVG bez závislostí — `priceChartSvg()` (line chart + area fill, mřížka s popisky max/střed/min, tečka na aktuální ceně) a `dividendChartSvg()` (sloupcový graf posledních 12 výplat s hodnotami). Lazy-load: `loadCardCharts(ticker)` fetchne `/api/history/<T>` a vykreslí; `_chartsLoaded` Set chrání proti dvojnásobnému fetchi.
+- Napojení: `observeChartCards()` — MutationObserver na `resultsEl` zachytí vklad karet ze všech cest (analýza, scan, uložené reporty) a spustí lazy-load; volá se v init před `loadStoredReports()`.
+- CSS: `.chart`, `.chart-line/area/dot/bar/grid/axis/val/empty` — barevné proměnné z design systému (accent/green), funguje i v tmavém režimu.
+- Testy: +3 nové offline testy v `tests/test_web_api.py` (fixture `history_server` s 3 cenami + 4 výplatami) — pořadí a obsah, prázdná historie pro neznámý ticker, neplatný ticker 400. Celkem **273 passed**, ruff clean, mypy clean (33 souborů), node --check OK.
 
 ### 2026-09-07 — hotovo „cron noční sync“ + „scan v web GUI“
 - **Cron**: `30 2 * * * cd /home/ai/Prace/projekty/dividend-tracker && .venv/bin/python -m dividend_tracker.cli sync >> ~/.cache/dividend-tracker/sync.log 2>&1` nainstalován do crontabu (ověřeno `crontab -l`, cron daemon běží). Sync vyhodnocuje i alerty.
