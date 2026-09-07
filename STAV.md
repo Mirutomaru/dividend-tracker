@@ -112,7 +112,7 @@ src/dividend_tracker/
 
 ### Stav ověření (poslední kontrola)
 ```bash
-.venv/bin/python -m pytest        # → 312 passed
+.venv/bin/python -m pytest        # → 314 passed
 .venv/bin/ruff check src tests    # → All checks passed!
 .venv/bin/mypy                    # → Success: no issues found in 35 source files
 git status                        # → clean (main)
@@ -143,7 +143,10 @@ git status                        # → clean (main)
 oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/scripts/`,
 `divtrack sync` bez argů teď zahrnuje i trvalou watchlistu), FMP fallback (Tiingo)
 a **mypy `disallow_untyped_defs = true`** (posledních 4 chybějících anotací doplněno).
-Další kandidát: **UP (pyupgrade) ruff pravidla** (backlog bod 8, ~400 mechanických modernizací).
+**Tiingo ověřeno proti živému API** — klíč nastaven, opraveny 3 odchylky od specifikace
+(auth Token ne Bearer, ceny na `/prices`, dividendy z `divCash` v barech); live sync KO
+napsal 40 dividendových záznamů. Další kandidát: **UP (pyupgrade) ruff pravidla**
+(backlog bod 8, ~400 mechanických modernizací).
 
 Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git log -3`.
 
@@ -156,13 +159,23 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 3. ~~**`divtrack scan` do web GUI**~~ — hotovo 2026-09-07: tlačítko „🎯 Najít nákupní příležitosti“, `POST /api/scan`, klikací výsledky
 4. ~~**Grafy**~~ — hotovo 2026-09-07: vanilla SVG line chart ceny (365 dní) + sloupcový graf výplat v detailní kartě, lazy-load přes `GET /api/history/<TICKER>`
 5. ~~**Valuační metriky + TWR/IRR + tooltipy**~~ — hotovo 2026-09-07: P/B, Graham číslo, Peter Lynch PEG, DCF rozklad v detailní kartě; srovnávací tabulka +5 sortable sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG); portfolio TWR % p.a. + IRR % p.a. z transakční historie (`portfolio_transactions`); vysvětlovky pod kurzorem myši na všech metrikách
-6. ~~**Rozšíření FMP fallback**~~ — hotovo 2026-09-07: druhý provider Tiingo (10 000 volání/den), chain FMP → Tiingo → yfinance, ceny primárně Tiingo
+6. ~~**Rozšíření FMP fallback**~~ — hotovo 2026-09-07: druhý provider Tiingo (10 000 volání/den), chain FMP → Tiingo → yfinance, ceny primárně Tiingo; **ověřeno proti živému API** (klíč nastaven, opraveny odchylky od specifikace — viz log níže)
 7. ~~**`disallow_untyped_defs = true`** v mypy~~ — hotovo 2026-09-07: doplněny poslední 4 chybějící anotace (`data/watchlist.py`, `gui/app.py`), příznak přepnut na true
 8. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
 
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — Tiingo ověřeno proti živému API + oprava 3 odchylek od specifikace
+- **Motivace**: uživatel dodal `TIINGO_API_KEY` (uloženo přes `divtrack config set` do `~/.cache/dividend-tracker/.env`). Live test KO prozradil, že implementace podle OpenAPI spec se liší od reálného chování API.
+- **Auth**: Tiingo očekává `Authorization: Token <klíč>`, ne `Bearer` (Bearer → 403 „Please supply a token“). Opraveno v `_get_json`; nová regresní test hlavičky (`test_auth_header_uses_token_scheme`).
+- **Ceny**: `/daily/{T}` s datovými parametry vrací META místo barů — bary jsou na `/daily/{T}/prices?startDate=...&endDate=...`. Předtím se ceny ticho padaly do yfinance fallbacku (Tiingo „fungoval“ ale nic nedaroval).
+- **Meta**: exchange je v poli `exchangeCode` (ne `exchange`), měna v metadu vůbec není → doplní výchozí hodnota.
+- **Dividendy**: `/corporate-actions/{T}/dividends` = 404 a `/distributions` = 403 (beta/enterprise plán). Na free plánu se historie odvozuje z pole `divCash` v cenových barech — nová metoda `get_dividend_history()` (1 volání, celá historie; bez parametrů Tiingo vrátí vše). Budoucí výplaty se z historie nedají odvodit → kalendář bývá prázdný.
+- **Testová izolace**: `test_no_api_key_uses_yfinance_fallback` selhával v plném běhu — testy CLI/web při importu načtou reálný `.env` (s Tiingo klíčem) a chain ho správně preferoval; opraveno `monkeypatch.delenv("TIINGO_API_KEY")`.
+- **Live ověření**: KO → name „Coca-Cola Company“, exchange NYSE, 40 dividendových záznamů (2016–2026) s korektními částkami.
+- **Ověření**: **314 passed** (+2 nové testy), ruff clean, mypy clean. Commit `26fadd3`.
 
 ### 2026-09-07 — mypy `disallow_untyped_defs = true` (backlog bod 7 hotovo)
 - **Motivace**: příznak byl vypnutý „postupné zavádění“; kontrolou se ukázalo, že zbývá jen 4 chybějících anotací ve 2 souborech — dokončit bylo levnější než nechat viset.
