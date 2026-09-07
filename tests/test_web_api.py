@@ -292,6 +292,19 @@ def test_portfolio_endpoint_empty(server):
     assert body["income_target"] == {"configured": False}
 
 
+def test_portfolio_endpoint_exposes_twr_irr(portfolio_server):
+    """Souhrn portfolia vystavuje klíče twr_pct/irr_pct (TWR/IRR metriky).
+
+    Pozice v fixture je nakoupena „dnes" → jen 1 datum, TWR/IRR ještě nedefinovatelné
+    (None), ale struktura endpointu musí klíče obsahovat. Reálná matematika je pokryta
+    doménovými testy (test_portfolio_returns.py) a end-to-end DB testy (test_portfolio.py).
+    """
+    status, body = _request(portfolio_server, "GET", "/api/portfolio")
+    assert status == 200
+    pf = body["portfolio"]
+    assert "twr_pct" in pf and "irr_pct" in pf
+
+
 # ------------------------------------------------------------------ alerts (DB)
 
 @pytest.fixture()

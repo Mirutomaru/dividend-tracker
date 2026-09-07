@@ -91,6 +91,9 @@ class MetricsReport(BaseModel):
     # B. Ocenění & valuace
     pe_ttm: Optional[float] = None
     pe_forward: Optional[float] = None
+    p_b: Optional[float] = None                  # cena / účetní hodnota na akcii (equity ÷ shares)
+    graham_number: Optional[float] = None        # √(22,5 × EPS_TTM × BVPS) — Benjaminoва férová cena
+    lynch_peg: Optional[float] = None            # P/E ÷ růst % (růst = 5letý CAGR dividendy jako proxy)
     p_fcf: Optional[float] = None
     ev_ebitda: Optional[float] = None
     fcf_yield_pct: Optional[float] = None         # FCF per share / cena

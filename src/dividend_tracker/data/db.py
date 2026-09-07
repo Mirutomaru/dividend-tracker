@@ -99,6 +99,17 @@ CREATE TABLE IF NOT EXISTS portfolio (
     updated_at  REAL                 -- epoch sekund poslední změny pozice
 );
 
+CREATE TABLE IF NOT EXISTS portfolio_transactions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker      TEXT NOT NULL,       -- pozice, ke které transakce patří
+    kind        TEXT NOT NULL,       -- buy | sell | dividend
+    date_iso    TEXT NOT NULL,       -- ISO datum transakce (YYYY-MM-DD)
+    shares      REAL,                -- počet akcií (buy/sell); u dividend NULL
+    price       REAL,                -- cena za akcii (buy/sell); u dividend NULL
+    amount      REAL,                -- celková částka: buy/sell = shares×price; dividend = vyplacená částka
+    created_at  REAL                 -- epoch sekund záznamu
+);
+
 CREATE TABLE IF NOT EXISTS price_history (
     ticker      TEXT NOT NULL,
     date        TEXT NOT NULL,       -- ISO YYYY-MM-DD (denní snapshot)
@@ -517,12 +528,34 @@ class Database:
         avg_cost: Optional[float] = None,
         currency: Optional[str] = None,
     ) -> None:
-        """Vloží/aktualizuje drženou pozici. ``shares <= 0`` pozici smaže."""
+        """Vloží/aktualizuje drženou pozici. ``shares <= 0`` pozici smaže.
+
+        Pro výpočet TWR/IRR se automaticky zapisují transakce (buy/sell) do
+        ``portfolio_transactions`` — nová pozice = buy, snížení podílu = sell,
+        zvýšení = buy (cena: avg_cost, jinak aktuální quote).
+        """
         tk = ticker.upper()
-        if shares is not None and shares <= 0:
-            self.remove_position(tk)
-            return
+        today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
         with self._conn() as conn:
+            row = conn.execute(
+                "SELECT shares FROM portfolio WHERE ticker=?", (tk,)
+            ).fetchone()
+            old_shares: Optional[float] = float(row["shares"]) if row else None
+
+            if shares is not None and shares <= 0:
+                # Kompletní prodej — záznam sell za poslední známou cenou.
+                px = (self.get_quote(tk) or {}).get("current_price")
+                if old_shares and old_shares > 0 and px:
+                    conn.execute(
+                        """INSERT INTO portfolio_transactions
+                           (ticker, kind, date_iso, shares, price, amount, created_at)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (tk, "sell", today_iso, old_shares, px, round(old_shares * px, 2), time.time()),
+                    )
+                conn.execute("DELETE FROM portfolio WHERE ticker=?", (tk,))
+                return
+
             conn.execute(
                 """INSERT INTO portfolio (ticker, shares, avg_cost, currency, updated_at)
                    VALUES (?,?,?,?,?)
@@ -534,6 +567,38 @@ class Database:
                 (tk, shares, avg_cost, currency or "USD", time.time()),
             )
 
+            # Transakční záznam pro TWR/IRR.
+            quote_px = self.get_quote(tk)
+            if old_shares is None:
+                px = avg_cost or (quote_px or {}).get("current_price")
+                if shares > 0 and px:
+                    conn.execute(
+                        """INSERT INTO portfolio_transactions
+                           (ticker, kind, date_iso, shares, price, amount, created_at)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (tk, "buy", today_iso, shares, px, round(shares * px, 2), time.time()),
+                    )
+            elif old_shares > 0 and shares < old_shares:
+                sold = old_shares - shares
+                px = (quote_px or {}).get("current_price") or avg_cost
+                if px:
+                    conn.execute(
+                        """INSERT INTO portfolio_transactions
+                           (ticker, kind, date_iso, shares, price, amount, created_at)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (tk, "sell", today_iso, sold, px, round(sold * px, 2), time.time()),
+                    )
+            elif shares > old_shares:
+                bought = shares - old_shares
+                px = avg_cost or (quote_px or {}).get("current_price")
+                if px:
+                    conn.execute(
+                        """INSERT INTO portfolio_transactions
+                           (ticker, kind, date_iso, shares, price, amount, created_at)
+                           VALUES (?,?,?,?,?,?,?)""",
+                        (tk, "buy", today_iso, bought, px, round(bought * px, 2), time.time()),
+                    )
+
     def remove_position(self, ticker: str) -> None:
         with self._conn() as conn:
             conn.execute("DELETE FROM portfolio WHERE ticker=?", (ticker.upper(),))
@@ -544,6 +609,54 @@ class Database:
                 "SELECT * FROM portfolio ORDER BY ticker"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ------------------------------------------------- portfolio_transactions
+
+    def add_transaction(
+        self,
+        ticker: str,
+        kind: str,
+        date_iso: str,
+        shares: Optional[float] = None,
+        price: Optional[float] = None,
+        amount: Optional[float] = None,
+    ) -> None:
+        """Zapíše transakci portfolia (buy/sell/dividend) pro výpočet TWR/IRR.
+
+        ``amount`` je celková částka cash flow: buy = −shares×price, sell = +shares×price,
+        dividend = +vyplacená částka. Sign konvence řeší vrstva nahoře (domain).
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO portfolio_transactions
+                   (ticker, kind, date_iso, shares, price, amount, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (ticker.upper(), kind, date_iso, shares, price, amount, time.time()),
+            )
+
+    def list_transactions(self, ticker: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Transakce portfolia seřazené podle data (nejstarší první)."""
+        with self._conn() as conn:
+            if ticker is not None:
+                rows = conn.execute(
+                    "SELECT * FROM portfolio_transactions WHERE ticker=? ORDER BY date_iso, id",
+                    (ticker.upper(),),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM portfolio_transactions ORDER BY date_iso, id"
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def clear_transactions(self, ticker: Optional[str] = None) -> None:
+        """Smaže transakce (celé portfolio nebo jeden ticker)."""
+        with self._conn() as conn:
+            if ticker is not None:
+                conn.execute(
+                    "DELETE FROM portfolio_transactions WHERE ticker=?", (ticker.upper(),)
+                )
+            else:
+                conn.execute("DELETE FROM portfolio_transactions")
 
     # ----------------------------------------------------------- price_history
 

@@ -38,6 +38,7 @@ const targetLabel = $("#target-progress-label");
 const targetBar = $("#target-progress-bar");
 const targetDetail = $("#target-detail");
 const alertsSection = $("#alerts-section");
+const metricTooltip = $("#metric-tooltip");
 const alertsBody = $("#alerts-body");
 const alertsCount = $("#alerts-count");
 const alertForm = $("#alert-form");
@@ -107,15 +108,39 @@ function scoreClass(score) {
 
 const FLAG_LABELS = { green: "🟢 Bezpečná", yellow: "🟡 Pozor", red: "🔴 Riziková" };
 
+/** Vysvětlovky metrik — zobrazí se tooltipem při najetí kurzorem (data-tip). */
+const METRIC_TIPS = {
+  pe_ttm: "P/E (TTM) — cena děleno ziskem na akcii za posledních 12 měsíců. Kolik platíš za 1 $ zisku; nižší = levnější. Srovnávej jen u firem ze stejného odvětví.",
+  pe_forward: "P/E (forward) — P/E podle očekávaného příštího EPS. Srovnání s TTM ukazuje, jestli trh čeká růst nebo pokles zisku.",
+  ev_ebitda: "EV/EBITDA — celková hodnota firmy (tržní + dluh − hotovost) děleno provozním ziskem před úrokem a odpisy. Nejlepší násobek pro srovnání firem napříč odvětvími, protože ignoruje daňové a finanční struktury.",
+  p_b: "P/B — cena děleno účetní hodnotou na akcii (majetek − dluh). Hodnota pod 1× znamená, že trh oceňuje firmu pod likvidační hodnotou jejího majetku.",
+  graham: "Grahamovo číslo — √(22,5 × EPS × účetní hodnota na akcii). Benjaminova „spravedlivá cena“; aktuální cena pod touto hodnotou = marže bezpečí.",
+  lynch_peg: "Peter Lynch PEG — P/E děleno ročním růstem (%). Pod 1 = akcie levná vůči svému růstu, nad 2 = drahá. Růst zde = 5letý CAGR dividendy (proxy).",
+  p_fcf: "P/FCF — cena děleno volným hotovostním tokem na akcii. Ocenění podle reálné generované hotovosti, ne účetního zisku.",
+  fcf_yield: "FCF yield — obrácený P/FCF v %. Kolik % tvé investice se vrací ročně jako čistá hotovost firmy.",
+  yield_5y: "Yield vs. 5letý průměr — aktuální dividendový výnos oproti jeho vlastnímu 5letému průměru. Nad průměrem = často příležitost, pod = výnos se snižuje.",
+  yield_trailing: "Dividendový výnos (trailing) — roční výplaty za posledních 12 měsíců jako % ceny. Hlavní ukazatel výnosnosti akcie pro rentiera.",
+  dps_ttm: "DPS TTM — dividendy na akcii za posledních 12 měsíců. Kolik $ dostaneš ročně za jednu akcií.",
+  payout: "Payout ratio — kolik % zisku firma rozdává jako dividendu. Nad 100 % = vyplácí víc, než vydělá (bez růstu nebo prodeje aktiv neudržitelné).",
+  growth_3510: "Růst dividendy za 3/5/10 let (CAGR) — historická schopnost firmy zvyšovat výplaty. Stabilní růst = ochrana před inflací.",
+  streak: "Série růstu výplat v letech — nepřetržitá historie zvyšování dividendy. Dlouhá série = disciplína managementu a nižší riziko krachu výplaty.",
+  net_debt_ebitda: "Net Debt / EBITDA — čistý dluh děleno provozním ziskem. Nad 3× = vysoká páka (riziko), pod 1,5× = konzervativní zadlužení.",
+  interest_coverage: "Interest Coverage — kolikrát firma pokryje úroky ze svého provozního zisku. Pod 2× = dluh začíná tlačit na zisk.",
+  roic: "ROIC — návratnost investovaného kapitálu v %. Míří, jak efektivně firma proměňuje kapitál ve zisk; vyšší a stabilní = kvalitní podnik.",
+  twr: "TWR (time-weighted return) — skutečná výkonnost portfolia po očištění od vkladů a výběrů. Standardní metrika pro srovnání s benchmarkem (např. S&P 500).",
+  irr: "IRR (internal rate of return) — roční sazba, při které se všechny cash flowy (nákupy, prodeje, dividendy) vyváží s aktuální hodnotou portfolia. Zohledňuje časové rozložení každé transakce.",
+};
+
 /* ------------------------------ tabulka ------------------------------ */
 
 /** Vytáhne řádek s hodnotami pro seřazení z reportu (nebo chyby). */
 function rowFromEntry(entry) {
   if (entry.error) {
-    return { ticker: entry.ticker, name: "", error: true, price: null, yieldPct: null, payout: null, growth5: null, streak: null, score: null, fv: null, zoneLow: null, zoneHigh: null, distPct: null };
+    return { ticker: entry.ticker, name: "", error: true, price: null, yieldPct: null, payout: null, growth5: null, streak: null, score: null, pe: null, pb: null, evebitda: null, graham: null, lynch: null, fv: null, zoneLow: null, zoneHigh: null, distPct: null };
   }
   const r = entry.report;
   const d = (r.metrics || {}).dividend || {};
+  const v = (r.metrics || {}).valuation || {};
   const score = r.score || {}, fv = r.fair_value || {};
   const isReit = /real estate/i.test((r.company || {}).sector || "");
   const payout = isReit ? (d.affo_payout_ratio_pct ?? d.ffo_payout_ratio_pct) : d.payout_ratio_eps_pct;
@@ -135,6 +160,11 @@ function rowFromEntry(entry) {
     growth5: d.growth_cagr_5y_pct,
     streak: d.dividend_streak_years ?? null,
     score: score.applicable === false ? null : (score.total_0_100 ?? null),
+    pe: v.pe_ttm ?? null,
+    pb: v.p_b ?? null,
+    evebitda: v.ev_ebitda ?? null,
+    graham: v.graham_number ?? null,
+    lynch: v.lynch_peg ?? null,
     fv: fv.fair_value ?? null,
     zoneLow: fv.buy_zone_low ?? null,
     zoneHigh: fv.buy_zone_high ?? null,
@@ -151,6 +181,11 @@ function sortValue(row) {
     case "growth5": return row.growth5;
     case "streak": return row.streak;
     case "score": return row.score;
+    case "pe": return row.pe;
+    case "pb": return row.pb;
+    case "evebitda": return row.evebitda;
+    case "graham": return row.graham;
+    case "lynch": return row.lynch;
     case "fv": return row.fv;
     case "zone": return row.zoneHigh;
     case "dist": return row.distPct == null ? Infinity : row.distPct; // nejblíž zóně nahoře
@@ -192,6 +227,11 @@ function renderTable(rows) {
       <td class="num">${fmtPct(row.growth5)}</td>
       <td class="num">${row.streak == null ? "—" : row.streak}</td>
       <td class="num">${scoreCell}</td>
+      <td class="num">${fmtX(row.pe)}</td>
+      <td class="num">${fmtX(row.pb)}</td>
+      <td class="num">${fmtX(row.evebitda)}</td>
+      <td class="num">${row.graham == null ? "—" : fmtMoney(row.graham)}</td>
+      <td class="num">${fmtX(row.lynch)}</td>
       <td class="num">${fmtMoney(row.fv)}</td>
       <td class="num">${row.zoneLow != null && row.zoneHigh != null ? `${fmtMoney(row.zoneLow)} – ${fmtMoney(row.zoneHigh)}` : "—"}</td>
       <td class="num">${distCell}</td>
@@ -440,9 +480,13 @@ function renderPortfolioSummary(p, t) {
     ["Portfolio yield", p.portfolio_yield_pct != null ? fmtPct(p.portfolio_yield_pct) : "—"],
     ["Net portfolio yield", p.net_portfolio_yield_pct != null ? fmtPct(p.net_portfolio_yield_pct) : "—"],
     ["Yield on cost", p.weighted_yield_on_cost_pct != null ? fmtPct(p.weighted_yield_on_cost_pct) : "—"],
+    ["TWR (p.a.)", p.twr_pct != null ? `${p.twr_pct >= 0 ? "+" : ""}${fmtPct(p.twr_pct)}` : "—", "twr"],
+    ["IRR (p.a.)", p.irr_pct != null ? `${p.irr_pct >= 0 ? "+" : ""}${fmtPct(p.irr_pct)}` : "—", "irr"],
   ];
-  pfSummary.innerHTML = stats.map(([label, value]) =>
-    `<div class="pf-stat"><div class="pf-label">${label}</div><div class="pf-value">${value}</div></div>`).join("");
+  pfSummary.innerHTML = stats.map(([label, value, tipKey]) => {
+    const tip = METRIC_TIPS[tipKey] ? ` data-tip="${escapeHtml(METRIC_TIPS[tipKey])}"` : "";
+    return `<div class="pf-stat"><div class="pf-label"${tip}>${label}</div><div class="pf-value">${value}</div></div>`;
+  }).join("");
 
   if (t && t.configured) {
     targetBox.classList.remove("hidden");
@@ -824,9 +868,10 @@ function renderScanResults(job) {
 
 /* ------------------------------ renderování karet ------------------------------ */
 
-function tile(label, value, sub = "", cls = "") {
+function tile(label, value, sub = "", cls = "", tipKey = "") {
+  const tip = METRIC_TIPS[tipKey] ? ` data-tip="${escapeHtml(METRIC_TIPS[tipKey])}"` : "";
   return `<div class="metric-tile">
-    <div class="metric-label">${label}</div>
+    <div class="metric-label"${tip}>${label}</div>
     <div class="metric-value ${cls}">${value}</div>
     ${sub ? `<div class="metric-sub">${sub}</div>` : ""}
   </div>`;
@@ -891,24 +936,32 @@ function renderTickerCard(entry) {
   const dividendHtml = `<div class="metric-section">
     <div class="section-title">Dividendy</div>
     <div class="metric-grid">
-      ${tile("Yield (trailing)", fmtPct(d.yield_trailing_pct), `forward: ${fmtPct(d.yield_forward_pct)}`)}
-      ${tile("DPS TTM", fmtMoney(d.dps_ttm, r.currency))}
-      ${tile(payoutLabel, fmtPct(payoutVal), isReit ? "REIT logika" : "", payoutCls)}
-      ${tile("Růst 3/5/10 let", [d.growth_cagr_3y_pct, d.growth_cagr_5y_pct, d.growth_cagr_10y_pct].map((x) => fmtPct(x)).join(" / "))}
-      ${tile("Série růstu výplat", `${fmtInt(d.dividend_streak_years)} let`)}
+      ${tile("Yield (trailing)", fmtPct(d.yield_trailing_pct), `forward: ${fmtPct(d.yield_forward_pct)}`, "", "yield_trailing")}
+      ${tile("DPS TTM", fmtMoney(d.dps_ttm, r.currency), "", "", "dps_ttm")}
+      ${tile(payoutLabel, fmtPct(payoutVal), isReit ? "REIT logika" : "", payoutCls, "payout")}
+      ${tile("Růst 3/5/10 let", [d.growth_cagr_3y_pct, d.growth_cagr_5y_pct, d.growth_cagr_10y_pct].map((x) => fmtPct(x)).join(" / "), "", "", "growth_3510")}
+      ${tile("Série růstu výplat", `${fmtInt(d.dividend_streak_years)} let`, "", "", "streak")}
     </div>
   </div>`;
 
   /* --- valuace --- */
+  const grahamSub = v.graham_number != null && r.price_current != null
+    ? (r.price_current <= v.graham_number
+        ? `cena pod Grahame: +${(((v.graham_number - r.price_current) / r.price_current) * 100).toFixed(1)} % marže`
+        : `cena nad Grahame: −${(((r.price_current - v.graham_number) / r.price_current) * 100).toFixed(1)} %`)
+    : "";
   const valuationHtml = `<div class="metric-section">
     <div class="section-title">Ocenění</div>
     <div class="metric-grid">
-      ${tile("P/E (TTM)", fmtX(v.pe_ttm), v.sector_median_pe_ttm != null ? `sektor: ${fmtX(v.sector_median_pe_ttm)}` : "")}
-      ${tile("P/E (forward)", fmtX(v.pe_forward))}
-      ${tile("EV/EBITDA", fmtX(v.ev_ebitda), v.sector_median_ev_ebitda != null ? `sektor: ${fmtX(v.sector_median_ev_ebitda)}` : "")}
-      ${tile("P/FCF", fmtX(v.p_fcf))}
-      ${tile("FCF yield", fmtPct(v.fcf_yield_pct))}
-      ${tile("Yield vs. 5letý průměr", fmtPct(d.yield_trailing_pct), v.dividend_yield_5y_avg_pct != null ? `průměr: ${fmtPct(v.dividend_yield_5y_avg_pct)}` : "")}
+      ${tile("P/E (TTM)", fmtX(v.pe_ttm), v.sector_median_pe_ttm != null ? `sektor: ${fmtX(v.sector_median_pe_ttm)}` : "", "", "pe_ttm")}
+      ${tile("P/E (forward)", fmtX(v.pe_forward), "", "", "pe_forward")}
+      ${tile("EV/EBITDA", fmtX(v.ev_ebitda), v.sector_median_ev_ebitda != null ? `sektor: ${fmtX(v.sector_median_ev_ebitda)}` : "", "", "ev_ebitda")}
+      ${tile("P/B", fmtX(v.p_b), "", "", "p_b")}
+      ${tile("Graham číslo", fmtMoney(v.graham_number, r.currency), grahamSub, v.graham_number != null && r.price_current != null && r.price_current <= v.graham_number ? "val-good" : "", "graham")}
+      ${tile("Peter Lynch PEG", fmtX(v.lynch_peg), v.lynch_peg != null ? (v.lynch_peg < 1 ? "< 1 = levný vůči růstu" : v.lynch_peg > 2 ? "> 2 = drahý vůči růstu" : "rozumná úroveň") : "", v.lynch_peg != null && v.lynch_peg < 1 ? "val-good" : v.lynch_peg != null && v.lynch_peg > 2 ? "val-bad" : "", "lynch_peg")}
+      ${tile("P/FCF", fmtX(v.p_fcf), "", "", "p_fcf")}
+      ${tile("FCF yield", fmtPct(v.fcf_yield_pct), "", "", "fcf_yield")}
+      ${tile("Yield vs. 5letý průměr", fmtPct(d.yield_trailing_pct), v.dividend_yield_5y_avg_pct != null ? `průměr: ${fmtPct(v.dividend_yield_5y_avg_pct)}` : "", "", "yield_5y")}
     </div>
   </div>`;
 
@@ -917,9 +970,9 @@ function renderTickerCard(entry) {
   const healthHtml = `<div class="metric-section">
     <div class="section-title">Finanční zdraví</div>
     <div class="metric-grid">
-      ${tile("Net Debt / EBITDA", fmtX(h.net_debt_to_ebitda), "", ndCls)}
-      ${tile("Interest Coverage", fmtX(h.interest_coverage))}
-      ${tile("ROIC", fmtPct(h.roic_pct))}
+      ${tile("Net Debt / EBITDA", fmtX(h.net_debt_to_ebitda), "", ndCls, "net_debt_ebitda")}
+      ${tile("Interest Coverage", fmtX(h.interest_coverage), "", "", "interest_coverage")}
+      ${tile("ROIC", fmtPct(h.roic_pct), "", "", "roic")}
     </div>
   </div>`;
 
@@ -934,6 +987,17 @@ function renderTickerCard(entry) {
     const pricePos = ((r.price_current ?? lo) - lo) / span * 100;
     const verdictCls = fv.verdict === "undervalued" ? "flag-green" : fv.verdict === "overvalued" ? "flag-red" : "flag-yellow";
 
+    const dcfRows = [
+      ["Gordon model", fv.gordon_price, "Jednofázový dividendový diskontní model: P = D₁ / (r − g). Předpokládá konstantní růst dividendy navždy — konzervativní základ."],
+      ["Two-stage DDM", fv.two_stage_price, "Dvoustupňový model: vysoký krátkodobý růst dividendy, pak stabilizace. Realističtější pro firmy v růstu (g > r v první fázi)."],
+      ["Výnosová cena", fv.yield_based_price, "Cena, při které by výnos dosáhl požadované návratnosti (bez předpokladu růstu). Dolní hranice ocenění."],
+    ].filter(([, val]) => val != null);
+
+    const dcfHtml = dcfRows.length ? `<div class="metric-grid" style="margin-top:14px">
+      ${dcfRows.map(([label, val, tip]) => `<div class="metric-tile"><div class="metric-label" data-tip="${escapeHtml(tip)}">${label}</div><div class="metric-value">${fmtMoney(val, r.currency)}</div></div>`).join("")}
+    </div>
+    <p style="font-size:12px;color:var(--text-secondary);margin-top:8px">Použitý model: ${escapeHtml(fv.ddm_model || "—")}${fv.growth_assumed_pct != null ? ` · předpokládaný růst ${fmtPct(fv.growth_assumed_pct)}` : ""} · požadovaná návratnost ${fmtPct(fv.required_return_pct)}</p>` : "";
+
     fvHtml = `<div class="metric-section fv-band-wrap">
       <div class="section-title">Férová cena &amp; nákupní zóna</div>
       <span class="verdict-pill ${verdictCls}">${escapeHtml(fv.verdict_display || fv.verdict)}</span>
@@ -946,6 +1010,7 @@ function renderTickerCard(entry) {
         <span>Nákupní zóna: ${fmtMoney(fv.buy_zone_low, r.currency)} – ${fmtMoney(fv.buy_zone_high, r.currency)}</span>
         <span>FV: ${fmtMoney(fv.fair_value, r.currency)}</span>
       </div>
+      ${dcfHtml}
     </div>`;
   }
 
@@ -1100,6 +1165,50 @@ function observeChartCards() {
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+/* ------------------------------ tooltipy metrik (data-tip) ------------------------------ */
+
+/**
+ * Plovoucí vysvětlovky pro metriky. Event delegace na `document` — funguje i na
+ * dynamicky vkládaných kartách a buňkách tabulek bez dalšího připojování listenerů.
+ * Prvek s atributem `data-tip="text"` zobrazí tooltip nad kurzorem (position: fixed,
+ * takže ho neoreže `overflow:hidden` karet).
+ */
+function initTooltips() {
+  if (!metricTooltip) return;
+
+  const show = (el) => {
+    metricTooltip.textContent = el.getAttribute("data-tip");
+    metricTooltip.classList.add("visible");
+    move(el);
+  };
+  const hide = () => metricTooltip.classList.remove("visible");
+  const move = (el) => {
+    const r = el.getBoundingClientRect();
+    const tw = metricTooltip.offsetWidth;
+    // výchozí pozice: nad prvkem, vodorovně vycentrovaná
+    let left = r.left + r.width / 2 - tw / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+    let top = r.top - metricTooltip.offsetHeight - 10;
+    if (top < 8) top = r.bottom + 10; // nevejde nahoře → pod prvek
+    metricTooltip.style.left = `${left}px`;
+    metricTooltip.style.top = `${top}px`;
+  };
+
+  document.addEventListener("mouseover", (e) => {
+    const el = e.target.closest("[data-tip]");
+    if (el && el.getAttribute("data-tip")) show(el);
+  });
+  document.addEventListener("mouseout", (e) => {
+    const el = e.target.closest("[data-tip]");
+    if (el && !el.contains(e.relatedTarget)) hide();
+  });
+  // scroll/resize → tooltip by mohl viset mimo prvek → schovej
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+}
+
+initTooltips();
 
 /* ------------------------------ uložené reporty (DB) ------------------------------ */
 

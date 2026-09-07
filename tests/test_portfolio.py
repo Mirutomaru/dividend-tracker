@@ -159,3 +159,84 @@ def test_income_target_invalid_value(tmp_path):
         assert build_income_target_report(d) == {"configured": False}
     finally:
         d.close()
+
+
+# ------------------------------ TWR/IRR end-to-end (DB) ------------------------
+
+def test_portfolio_returns_empty(tmp_path):
+    """Bez transakční historie → twr_pct i irr_pct None."""
+    d = Database(str(tmp_path / "ret_empty.db"))
+    try:
+        report = build_portfolio_report(d)
+        assert report["twr_pct"] is None
+        assert report["irr_pct"] is None
+    finally:
+        d.close()
+
+
+def test_portfolio_returns_single_buy_gain(tmp_path):
+    """Nákup před rokem za 50, aktuální cena 60 → TWR ≈ +20 %, IRR ≈ +20 % p.a."""
+    from datetime import date, timedelta
+
+    d = Database(str(tmp_path / "ret.db"))
+    try:
+        buy_date = (date.today() - timedelta(days=365)).isoformat()
+        d.upsert_stock("KO", name="Coca-Cola")
+        d.upsert_quote("KO", current_price=60.0)
+        d.record_price_snapshot("KO", buy_date, 50.0)
+        # Nákup 100 akcií za 50 $ (buy = záporný cash flow).
+        d.add_transaction("KO", "buy", buy_date, shares=100, price=50.0, amount=5000.0)
+
+        report = build_portfolio_report(d)
+        assert report["twr_pct"] == pytest.approx(20.0, abs=0.5)
+        assert report["irr_pct"] == pytest.approx(20.0, abs=0.5)
+    finally:
+        d.close()
+
+
+def test_portfolio_returns_upsert_auto_transaction(tmp_path):
+    """upsert_position automaticky zapíše buy transakci; jednodenní nákup → TWR/IRR None."""
+    from datetime import date
+
+    d = Database(str(tmp_path / "ret_auto.db"))
+    try:
+        # Pozice bez explicitní transakce — upsert_position ji doplní (buy za avg_cost).
+        d.upsert_stock("KO", name="Coca-Cola")
+        d.upsert_quote("KO", current_price=60.0)
+        d.record_price_snapshot("KO", date.today().isoformat(), 50.0)
+        d.upsert_position("KO", shares=100, avg_cost=50.0)
+
+        txns = d.list_transactions()
+        assert len(txns) == 1 and txns[0]["kind"] == "buy"
+        # buy cash flow je záporný (peníze odcházejí z portfolia).
+        assert txns[0]["amount"] == pytest.approx(5000.0)
+
+        report = build_portfolio_report(d)
+        # Nákup i hodnocení ve stejný den → jen 1 datum, TWR/IRR ještě nedefinovatelné.
+        assert report["twr_pct"] is None
+        assert report["irr_pct"] is None
+    finally:
+        d.close()
+
+
+def test_portfolio_returns_with_dividend(tmp_path):
+    """Nákup + dividendový cash flow — TWR zohlední výplatu, IRR se řeší bisekcí."""
+    from datetime import date, timedelta
+
+    d = Database(str(tmp_path / "ret_div.db"))
+    try:
+        buy_date = (date.today() - timedelta(days=365)).isoformat()
+        div_date = (date.today() - timedelta(days=180)).isoformat()
+        d.upsert_stock("KO", name="Coca-Cola")
+        d.upsert_quote("KO", current_price=62.0)
+        d.record_price_snapshot("KO", buy_date, 50.0)
+        d.record_price_snapshot("KO", div_date, 58.0)
+        d.add_transaction("KO", "buy", buy_date, shares=100, price=50.0, amount=5000.0)
+        # Dividenda 2 $/akcii na ex-date (držíme 100 akcií → +200 cash flow).
+        d.upsert_dividend("KO", div_date, dividend_amount=2.0)
+
+        report = build_portfolio_report(d)
+        assert report["twr_pct"] is not None
+        assert report["irr_pct"] is not None
+    finally:
+        d.close()

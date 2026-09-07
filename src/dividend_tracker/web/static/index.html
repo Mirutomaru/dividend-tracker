@@ -216,6 +216,11 @@
                 <th data-key="growth5" class="sortable num">Růst 5l %</th>
                 <th data-key="streak" class="sortable num">Série l.</th>
                 <th data-key="score" class="sortable num">Skóre</th>
+                <th data-key="pe" class="sortable num" data-tip="P/E (TTM) — cena děleno ziskem na akcii za posledních 12 měsíců. Kolik platíš za 1 Kč zisku; nižší = levnější. Srovnávej jen u firem ze stejného odvětví.">P/E</th>
+                <th data-key="pb" class="sortable num" data-tip="P/B — cena děleno účetní hodnotou na akcii (majetek − dluh). Hodnota pod 1× znamená, že trh oceňuje firmu pod likvidační hodnotou jejího majetku.">P/B</th>
+                <th data-key="evebitda" class="sortable num" data-tip="EV/EBITDA — celková hodnota firmy (tržní + dluh − hotovost) děleno provozním ziskem před úrokem a odpisy. Nejlepší násobek pro srovnání firem napříč odvětvími, protože ignoruje daňové a finanční struktury.">EV/EBITDA</th>
+                <th data-key="graham" class="sortable num" data-tip="Grahamovo číslo — √(22,5 × EPS × účetní hodnota na akcii). Benjaminova „spravedlivá cena“; aktuální cena pod touto hodnotou = marže bezpečí.">Graham</th>
+                <th data-key="lynch" class="sortable num" data-tip="Peter Lynch PEG — P/E děleno ročním růstem (%). Pod 1 = akcie levná vůči svému růstu, nad 2 = drahá. Růst zde = 5letý CAGR dividendy (proxy).">Lynch</th>
                 <th data-key="fv" class="sortable num">Férová cena</th>
                 <th data-key="zone" class="sortable num">Nákupní zóna</th>
                 <th data-key="dist" class="sortable num">Do zóny</th>
@@ -241,6 +246,9 @@
   <footer class="footer">
     Data: Yahoo Finance + Financial Modeling Prep · cache-first lokální databáze · Není investiční doporučení
   </footer>
+
+  <!-- Plovoucí tooltip pro metriky (data-tip) -->
+  <div id="metric-tooltip" role="tooltip"></div>
 
   <script src="/static/app.js"></script>
 </body>

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from dividend_tracker.domain.dividends import aggregate_dividends, cagr, dividend_streak, full_years
 from dividend_tracker.domain.metrics import compute_metrics
 
@@ -90,3 +92,51 @@ def test_streak_breaks_on_decline():
 def test_streak_counts_consecutive_growth():
     annual = {2021: 4.0, 2022: 4.2, 2023: 4.5}
     assert dividend_streak(annual) == 2
+
+
+# ------------------------------ valuace metriky (P/B, Graham, Lynch PEG) --------
+
+def test_price_to_book(healthy_snapshot):
+    m = compute_metrics(healthy_snapshot)
+    # BVPS = equity / shares = 30e9 / 1e9 = 30.0; P/B = 60 / 30 = 2.0x
+    assert m.p_b == pytest.approx(2.0, abs=0.01)
+
+
+def test_graham_number(healthy_snapshot):
+    m = compute_metrics(healthy_snapshot)
+    # Graham = sqrt(22.5 * EPS_TTM * BVPS) = sqrt(22.5 * 12 * 30) = sqrt(8100) = 90.0
+    assert m.graham_number == pytest.approx(90.0, abs=0.01)
+
+
+def test_lynch_peg(healthy_snapshot):
+    m = compute_metrics(healthy_snapshot)
+    # PEG = P/E / růst %; růst = 5letý CAGR dividendy (proxy).
+    assert m.pe_ttm is not None and m.cagr_5y_pct is not None
+    expected = round(m.pe_ttm / m.cagr_5y_pct, 2)
+    assert m.lynch_peg == pytest.approx(expected, abs=0.01)
+
+
+def test_valuation_metrics_missing_equity(healthy_snapshot):
+    s = healthy_snapshot.model_copy(update={"equity": None})
+    m = compute_metrics(s)
+    # Bez equity chybí BVPS → P/B i Graham None; Lynch PEG nezávislý na equity.
+    assert m.p_b is None
+    assert m.graham_number is None
+    assert m.lynch_peg is not None
+
+
+def test_valuation_metrics_zero_eps(healthy_snapshot):
+    s = healthy_snapshot.model_copy(update={"eps_ttm": 0.0})
+    m = compute_metrics(s)
+    # EPS ≤ 0 → P/E None, Graham None (EPS v čitateli), Lynch PEG None (P/E chybí).
+    assert m.pe_ttm is None
+    assert m.graham_number is None
+    assert m.lynch_peg is None
+
+
+def test_valuation_metrics_negative_equity(healthy_snapshot):
+    s = healthy_snapshot.model_copy(update={"equity": -5e9})
+    m = compute_metrics(s)
+    # Záporná equity → BVPS ≤ 0 → P/B i Graham None.
+    assert m.p_b is None
+    assert m.graham_number is None

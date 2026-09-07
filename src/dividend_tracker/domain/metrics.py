@@ -94,6 +94,18 @@ def compute_metrics(snap: Snapshot) -> MetricsReport:
     elif snap.ev_ebitda_reported is not None and snap.ev_ebitda_reported > 0:
         m.ev_ebitda = round(float(snap.ev_ebitda_reported), 2)
 
+    # P/B a Graham číslo — potřebují účetní hodnotu na akcii (equity ÷ shares).
+    bvps = _safe_div(snap.equity, snap.shares_outstanding) if snap.equity else None
+    if bvps and bvps > 0 and snap.price:
+        m.p_b = round(snap.price / bvps, 2)
+    # Graham číslo = √(22,5 × EPS_TTM × BVPS); 22,5 = P/E 15 × P/B 1,5 (Graham & Dodd).
+    if snap.eps_ttm and snap.eps_ttm > 0 and bvps and bvps > 0:
+        m.graham_number = round((22.5 * snap.eps_ttm * bvps) ** 0.5, 2)
+    # Peter Lynch PEG = P/E ÷ růst (%). Růst = 5letý CAGR dividendy (proxy —
+    # historie EPS není v DB); <1 levný vůči růstu, >2 drahý.
+    if m.pe_ttm and m.cagr_5y_pct is not None and m.cagr_5y_pct > 0:
+        m.lynch_peg = round(m.pe_ttm / m.cagr_5y_pct, 2)
+
     # 5letý průměr dividendového výnosu: yield_y = DPS_y / závěrečná cena_y (max. 5 plných let)
     yields_5y = []
     for y in sorted(set(snap.annual_dps) & set(snap.fiscal_year_prices))[-5:]:

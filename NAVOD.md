@@ -223,6 +223,13 @@ Co umí přímo v prohlížeči (bez CLI):
 - **Grafy v detailní kartě** — každá analytická karta automaticky načte dva grafy:
   průběh ceny za posledních 365 dní (čára s aktuální cenou) a sloupcový graf výplat
   dividend (posledních 12). Data se čtou z lokální DB, takže fungují i offline.
+- **Valuační metriky + vysvětlovky** — detailní karta ukazuje P/E, EV/EBITDA, P/B,
+  Grahamovo číslo, Peter Lynch PEG a rozklad férové ceny (Gordon / two-stage / výnosová).
+  Srovnávací tabulka má navíc sloupce P/E · P/B · EV/EBITDA · Graham · Lynch PEG
+  (vše seřaditelné kliknutím na záhlaví). **Najeď kurzorem myši na libovolnou metriku**
+  a zobrazí se vysvětlovka, k čemu je dobrá. Portfolio navíc ukazuje TWR % p.a. a
+  IRR % p.a. — skutečnou výkonnost držeb po očištění od vkladů/výběrů (spočítává se z
+  transakční historie, která se automaticky zapisuje při přidávání/měnách pozic).
 
 ### Tkinter GUI (desktop)
 

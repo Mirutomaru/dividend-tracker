@@ -16,9 +16,10 @@ src/dividend_tracker/
 ├── models.py            Pydantic modely (Snapshot → MetricsReport → Score/FairValue)
 ├── domain/              čistá logika, bez sítě/UI — 100 % pokryto offline testy
 │   ├── dividends.py     agregace plateb, CAGR, streak, split-adjustment
-│   ├── metrics.py       metriky A (dividendy), B (valuace), C (solvence)
+│   ├── metrics.py       metriky A (dividendy), B (valuace vč. P/B, Graham, Lynch PEG), C (solvence)
 │   ├── scoring.py       skóre 0–100 + safety flag + signály (BUY_ZONE / DIVIDEND_TRAP)
 │   ├── valuation.py     Gordon, two-stage DDM, výnosová metoda, nákupní zóna
+│   ├── portfolio_returns.py  TWR (chain-linking) + IRR (bisekce) — čisté funkce, cash flow konvence buy=−/sell+dividend=+
 │   ├── tax.py           srážková daň podle země původu (sazby přepisovatelné)
 │   └── sectors.py       odvětví + REIT detekce (is_reit_like)
 ├── data/                sběr dat + SQLite cache-first DB (~/.cache/dividend-tracker/data.db)
@@ -97,16 +98,23 @@ src/dividend_tracker/
 - **Grafy v detailní kartě** — vanilla SVG bez závislostí: line chart ceny za 365 dní
   + sloupcový graf posledních 12 výplat; lazy-load přes `GET /api/history/<TICKER>`
   (MutationObserver zachytí karty ze všech cest — analýza, scan, uložené reporty).
+- **Valuační metriky + TWR/IRR + tooltipy** — detailní karta: nové tile P/B, Graham
+  číslo (s marží bezpečí), Peter Lynch PEG (5letý CAGR dividend jako proxy růstu) a
+  DCF rozklad férové ceny (Gordon/two-stage/výnosová). Srovnávací tabulka: +5 sortable
+  sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG). Portfolio souhrn: TWR % p.a. a
+  IRR % p.a. z nové transakční historie (`portfolio_transactions`, automaticky plněná
+  při změnách pozic v `upsert_position`; čistý modul `domain/portfolio_returns.py`).
+  Každá metrika má vysvětlovku pod kurzorem myši (plovoucí tooltip přes `data-tip`).
 - **Onboarding** — `./start.sh` (one-click: auto-install + web GUI), `install.sh`. `e80fea5`
 - **Hygiena & CI** — ruff + mypy v CI (GitHub Actions, Python 3.10/3.12/3.13),
   MIT LICENSE, NAVOD.md (praktický návod). `d0dc42f`, `78d1c60`
-- **Testy** — 273 testů, vše offline (domain + data layer s tmp DB + web API s mockem).
+- **Testy** — 292 testů, vše offline (domain + data layer s tmp DB + web API s mockem).
 
 ### Stav ověření (poslední kontrola)
 ```bash
-.venv/bin/python -m pytest        # → 273 passed
+.venv/bin/python -m pytest        # → 292 passed
 .venv/bin/ruff check src tests    # → All checks passed!
-.venv/bin/mypy                    # → Success: no issues found in 33 source files
+.venv/bin/mypy                    # → Success: no issues found in 34 source files
 git status                        # → clean (main)
 ```
 
@@ -131,8 +139,10 @@ git status                        # → clean (main)
 > Udržuj tuhle sekci vždy aktuální — co je v letu, kde jsme, jak pokračovat.
 
 **Nic v letu** (2026-09-07) — hotovo: „web GUI správa watchlisty/portfolia“,
-„cron noční sync“ (nainstalován do crontabu, 02:30), „scan v web GUI“ a **grafy**
-(cena + dividendová historie v detailní kartě). Další kandidát: **FMP fallback** (backlog bod 5).
+„cron noční sync“ (nainstalován do crontabu, 02:30), „scan v web GUI“, **grafy**
+(cena + dividendová historie v detailní kartě) a **valuační metriky + TWR/IRR + tooltipy**
+(P/B, Graham číslo, Peter Lynch PEG, DCF rozklad; srovnávací tabulka +5 sloupců;
+portfolio TWR/IRR z transakční historie). Další kandidát: **FMP fallback** (backlog bod 6).
 
 Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git log -3`.
 
@@ -144,13 +154,21 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 2. ~~**Cron noční sync**~~ — hotovo 2026-09-07: `30 2 * * *` v crontabu, log do `~/.cache/dividend-tracker/sync.log` (ověřeno `crontab -l`)
 3. ~~**`divtrack scan` do web GUI**~~ — hotovo 2026-09-07: tlačítko „🎯 Najít nákupní příležitosti“, `POST /api/scan`, klikací výsledky
 4. ~~**Grafy**~~ — hotovo 2026-09-07: vanilla SVG line chart ceny (365 dní) + sloupcový graf výplat v detailní kartě, lazy-load přes `GET /api/history/<TICKER>`
-5. **Rozšíření FMP fallback** — bez klíče běží jen yfinance; zvážit volitelný druhý provider
-6. **`disallow_untyped_defs = true`** v mypy po Fázi 4+ (nyní postupné zavádění)
-7. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
+5. ~~**Valuační metriky + TWR/IRR + tooltipy**~~ — hotovo 2026-09-07: P/B, Graham číslo, Peter Lynch PEG, DCF rozklad v detailní kartě; srovnávací tabulka +5 sortable sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG); portfolio TWR % p.a. + IRR % p.a. z transakční historie (`portfolio_transactions`); vysvětlovky pod kurzorem myši na všech metrikách
+6. **Rozšíření FMP fallback** — bez klíče běží jen yfinance; zvážit volitelný druhý provider
+7. **`disallow_untyped_defs = true`** v mypy po Fázi 4+ (nyní postupné zavádění)
+8. **UP (pyupgrade) ruff pravidla** — ~400 mechanických modernizací anotací jako samostatný commit
 
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — hotovo „valuační metriky + TWR/IRR + tooltipy“
+- **Backend**: `models.py` — `MetricsReport` dostal `p_b`, `graham_number`, `lynch_peg`. `domain/metrics.py` — výpočet P/B (cena ÷ equity/shares), Graham číslo √(22,5·EPS_TTM·BVPS) a Peter Lynch PEG = P/E ÷ 5letý CAGR dividend (proxy růstu). Nová tabulka `portfolio_transactions` v `db.py` + CRUD (`add_transaction`/`list_transactions`/`clear_transactions`); `upsert_position` automaticky zapisuje buy/sell transakce při změně pozice (prodej za poslední známou cenou z quotes).
+- **Nový modul** `domain/portfolio_returns.py` — čisté funkce bez sítě i DB: `time_weighted_return(value_series, external_flows)` (chain-linking TWR v %) a `internal_rate_of_return(cashflows, terminal_value, end_date)` (IRR p.a. bisekcí). Konvence cash flow: buy = záporné, sell/dividend = kladné.
+- **`data/portfolio.py`** — `compute_portfolio_returns(db)`: skládá hodnotový řetězec portfolia z price_history + transakcí + dividend (držené akcie × DPS na ex-date); `build_portfolio_report` vrací `twr_pct`/`irr_pct` v souhrnu.
+- **Frontend** (`app.js`, `index.html`, `style.css`): tooltip systém — plovoucí div `#metric-tooltip` (position: fixed) + JS event delegace na `data-tip` (zvoleno místo CSS ::after, protože `.ticker-card`/`.table-card` mají overflow:hidden). Slovník `METRIC_TIPS` (~20 českých vysvětlovek), `tile()` rozšířen o tipKey. Detailní karta: nové tile P/B, Graham číslo (s marží bezpečí), Lynch PEG + DCF rozklad férové ceny (Gordon/two-stage/výnosová). Srovnávací tabulka: +5 sortable sloupců (P/E, P/B, EV/EBITDA, Graham, Lynch PEG) s data-tip na záhlavích. Portfolio souhrn: TWR % p.a. + IRR % p.a.
+- **Testy**: +19 nových offline testů — `test_metrics.py` (+6: P/B=2.0×, Graham=$90.00, Lynch PEG=0.88 na fixture; edge cases), nový `tests/test_portfolio_returns.py` (8 testů čistých funkcí TWR/IRR), `test_portfolio.py` (+4 end-to-end přes DB: prázdné→None, nákup za rok→TWR≈+20 % i IRR≈+20 %, auto-transakce v upsert_position, dividendový cash flow), `test_web_api.py` (+1: /api/portfolio vystavuje twr_pct/irr_pct). Celkem **292 passed**, ruff clean, mypy clean (34 souborů), node --check OK.
 
 ### 2026-09-07 — hotovo „grafy v detailní kartě“
 - `web/server.py`: nový endpoint `GET /api/history/<TICKER>` → `{ticker, prices: [{date, close}], dividends: [{ex_date, amount}]}`; ceny = denní snapshoty za 365 dní (nejstarší první), dividendy = celá historie výplat (nejstarší první); neplatný ticker → 400.

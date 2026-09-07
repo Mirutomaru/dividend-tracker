@@ -11,6 +11,9 @@ Hlavní metriky:
   původu emitenta (sazby v ``domain/tax.py``, přepsatelné nastavením
   ``withholding_<ZEME>`` v DB)
 - portfolio yield (příjem / tržní hodnota) a vážený yield on cost
+- **TWR/IRR** — výkonnost portfolia z transakční historie
+  (``portfolio_transactions``, automaticky plněná při změnách pozic +
+  dividendy z ``dividends_history``), viz :mod:`..domain.portfolio_returns`
 - **kalkulačka cíle**: při zadaném ročním příjmu spočítá potřebný kapitál
   (cíl ÷ očekávaný yield) a ukáže progres portfolia k cíli.
 
@@ -23,13 +26,119 @@ daňové poradenství se poraďte s daňovým poradcem.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
+from ..domain.portfolio_returns import (
+    CashFlow,
+    internal_rate_of_return,
+    time_weighted_return,
+)
 from ..domain.tax import net_amount, withholding_rate
 from .db import Database
 from .watchlist import _build_series, _ttm
 
 log = logging.getLogger(__name__)
+
+
+def _shares_held_after(timeline: List[Tuple[str, float]], d_iso: str) -> float:
+    """Počet akcií držených na konci dne ``d_iso`` (po transakcích toho dne)."""
+    return sum(delta for txn_date, delta in timeline if txn_date <= d_iso)
+
+
+def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
+    """TWR a IRR portfolia z transakční historie (offline, bez sítě).
+
+    Vstupní data:
+    - ``portfolio_transactions`` — nákupy/prodeje (automaticky plněné při
+      změnách pozic v :meth:`Database.upsert_position`),
+    - ``dividends_history`` — dividendové cash flow = držené akcie × DPS na ex-date,
+    - ``price_history`` + ``quotes`` — hodnocení portfolia v historických datech.
+
+    Vrátí ``{"twr_pct": ..., "irr_pct": ...}`` (procenta p.a., None při nedostatku dat).
+    """
+    txns = db.list_transactions()
+    if not txns:
+        return {"twr_pct": None, "irr_pct": None}
+
+    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # Timeline podílu per ticker + externí cash flow (kladné = peníze do kapsy investora).
+    holdings: Dict[str, List[Tuple[str, float]]] = {}
+    flows: Dict[str, float] = {}
+    for t in txns:
+        tk = t["ticker"]
+        kind = t.get("kind")
+        d_iso = str(t.get("date_iso") or "")[:10]
+        if not d_iso:
+            continue
+        amount = float(t.get("amount") or 0.0)
+        shares = float(t.get("shares") or 0.0)
+        if kind == "buy":
+            holdings.setdefault(tk, []).append((d_iso, shares))
+            flows[d_iso] = flows.get(d_iso, 0.0) - amount
+        elif kind == "sell":
+            holdings.setdefault(tk, []).append((d_iso, -shares))
+            flows[d_iso] = flows.get(d_iso, 0.0) + amount
+
+    # Dividendové cash flow: akcie držené na ex-date × DPS za výplatu.
+    for tk in list(holdings):
+        for div in db.get_dividends(tk):
+            d_iso = str(div.get("ex_date") or "")[:10]
+            amt = float(div.get("dividend_amount") or 0.0)
+            if not d_iso or amt <= 0:
+                continue
+            held = _shares_held_after(holdings[tk], d_iso)
+            if held > 0:
+                flows[d_iso] = flows.get(d_iso, 0.0) + round(held * amt, 2)
+
+    event_dates = sorted(set(flows) | {today_iso})
+    if len(event_dates) < 2:
+        return {"twr_pct": None, "irr_pct": None}
+
+    # Ceny per ticker (celá historie — pro hodnocení v historických datech).
+    positions = {p["ticker"]: p for p in db.list_positions()}
+    price_maps: Dict[str, Dict[str, float]] = {}
+    fallback_px: Dict[str, Optional[float]] = {}
+    for tk in holdings:
+        hist = db.get_price_history(tk, days=36500)
+        price_maps[tk] = {str(r["date"])[:10]: float(r["close"]) for r in hist if r.get("close")}
+        quote = db.get_quote(tk) or {}
+        pos = positions.get(tk) or {}
+        fallback_px[tk] = quote.get("current_price") or pos.get("avg_cost")
+
+    def value_on(d_iso: str) -> Optional[float]:
+        """Tržní hodnota portfolia na konci dne ``d_iso`` (po transakcích toho dne)."""
+        total = 0.0
+        any_priced = False
+        for tk, timeline in holdings.items():
+            held = _shares_held_after(timeline, d_iso)
+            if held <= 0:
+                continue
+            px = price_maps[tk].get(d_iso) or fallback_px.get(tk)
+            if not px or px <= 0:
+                continue
+            total += held * float(px)
+            any_priced = True
+        return round(total, 2) if (any_priced and total > 0) else None
+
+    value_series: List[Tuple[str, float]] = []
+    for d_iso in event_dates:
+        v = value_on(d_iso)
+        if v is not None:
+            value_series.append((d_iso, v))
+
+    # TWR — jen data, která jsou ve value sérii (konzistence bodů a toků).
+    series_dates = {d for d, _ in value_series}
+    twr_flows = {d: flows[d] for d in sorted(series_dates) if d in flows}
+    twr_pct = time_weighted_return(value_series, twr_flows)
+
+    # IRR — všechny externí toky + terminální hodnota.
+    cashflows = [CashFlow(date_iso=d, amount=round(a, 2)) for d, a in sorted(flows.items())]
+    terminal_value = value_on(today_iso)
+    irr_pct = internal_rate_of_return(cashflows, terminal_value, today_iso) if terminal_value else None
+
+    return {"twr_pct": twr_pct, "irr_pct": irr_pct}
 
 
 def build_portfolio_report(db: Database) -> Dict[str, Any]:
@@ -119,6 +228,9 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
     if total_cost_basis > 0 and total_annual_income > 0:
         weighted_yield_on_cost_pct = round(total_annual_income / total_cost_basis * 100.0, 2)
 
+    # Výkonnost portfolia (TWR/IRR) z transakční historie — offline výpočet.
+    returns = compute_portfolio_returns(db)
+
     return {
         "positions": positions,
         "n_positions": len(positions),
@@ -135,6 +247,8 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
         "portfolio_yield_pct": portfolio_yield_pct,
         "net_portfolio_yield_pct": net_portfolio_yield_pct,
         "weighted_yield_on_cost_pct": weighted_yield_on_cost_pct,
+        "twr_pct": returns.get("twr_pct"),
+        "irr_pct": returns.get("irr_pct"),
     }
 
 
