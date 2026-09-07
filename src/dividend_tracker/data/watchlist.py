@@ -14,7 +14,7 @@ import json
 import logging
 import time
 from datetime import date, timedelta
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from .db import Database
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _build_series(rows: List[Dict[str, Any]]) -> Optional[pd.Series]:
+def _build_series(rows: list[dict[str, Any]]) -> pd.Series | None:
     """Sestaví ``pd.Series`` (DatetimeIndex → amount) z řádků dividends_history."""
     import pandas as pd
 
@@ -49,7 +49,7 @@ def _build_series(rows: List[Dict[str, Any]]) -> Optional[pd.Series]:
     return s[~s.index.duplicated(keep="last")]
 
 
-def _ttm(series: Optional[pd.Series]) -> float:
+def _ttm(series: pd.Series | None) -> float:
     """TTM DPS — součet plateb v posledních 365 dnech od poslední výplaty."""
     if series is None or len(series) == 0:
         return 0.0
@@ -59,7 +59,7 @@ def _ttm(series: Optional[pd.Series]) -> float:
     return round(float(window.sum()), 4)
 
 
-def _next_ex_date(db: Database, ticker: str) -> Optional[Dict[str, Any]]:
+def _next_ex_date(db: Database, ticker: str) -> dict[str, Any] | None:
     """Nejbližší budoucí výplata z kalendáře (ex_date > dnes)."""
     today = date.today().isoformat()
     for row in db.get_calendar(ticker):  # seřazeno ex_date ASC
@@ -68,7 +68,7 @@ def _next_ex_date(db: Database, ticker: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _payout_pct(stock: Dict[str, Any], dps_ttm: float) -> Optional[float]:
+def _payout_pct(stock: dict[str, Any], dps_ttm: float) -> float | None:
     """Payout ratio z uloženého fundamentálního snapshotu (DPS/EPS), pokud je k dispozici."""
     raw = stock.get("fundamentals_json")
     if not raw or dps_ttm <= 0:
@@ -83,7 +83,7 @@ def _payout_pct(stock: Dict[str, Any], dps_ttm: float) -> Optional[float]:
     return round(dps_ttm / eps * 100.0, 1)
 
 
-def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
+def build_watchlist_rows(db: Database) -> list[dict[str, Any]]:
     """Vrátí srovnávací řádky pro všechny tickery v DB (abecedně).
 
     Každý řádek obsahuje sledované atributy — frontend je může seřadit podle
@@ -102,7 +102,7 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
     # Trvalá watchlista — UI podle toho vykreslí ★ toggle (přidat/odebrat sledování).
     watched = {r["ticker"] for r in db.list_watchlist()}
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     seen: set = set()
     for stock in db.list_stocks():  # ORDER BY ticker → abecedně
         tk = stock["ticker"]
@@ -114,7 +114,7 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
         annual, counts, dps_ttm_db = aggregate_dividends(series)
         ttm = _ttm(series)  # konzistentní TTM okno (365 dní od poslední výplaty)
 
-        yield_pct: Optional[float] = None
+        yield_pct: float | None = None
         if price and price > 0 and ttm > 0:
             yield_pct = round(ttm / price * 100.0, 2)
 

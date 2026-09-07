@@ -10,19 +10,19 @@ import json
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..models import Benchmark, FairValueResult, MetricsReport, ScoreResult, Snapshot
 
 SCHEMA_VERSION = "1.0"
 
-SIGNAL_DISPLAY: Dict[str, str] = {
+SIGNAL_DISPLAY: dict[str, str] = {
     "BUY_ZONE_UNDERVALUED": "Možné podhodnocení / nákupní zóna",
     "DIVIDEND_TRAP": "⚠ DIVIDENDOVÁ PAST (dividend trap)",
     "NO_DIVIDENDS": "Společnost nevyplácí dividendu — model se nepoužil.",
 }
 
-VERDICT_DISPLAY: Dict[str, str] = {
+VERDICT_DISPLAY: dict[str, str] = {
     "undervalued": "Podhodnoceno (cena < 90 % FV)",
     "fair": "Férově oceněno (±10 % kolem FV)",
     "overvalued": "Přehodnoceno (cena > 110 % FV)",
@@ -30,7 +30,7 @@ VERDICT_DISPLAY: Dict[str, str] = {
 }
 
 
-def _own_5y_median_pe(snap: Snapshot) -> Optional[float]:
+def _own_5y_median_pe(snap: Snapshot) -> float | None:
     vals = [v for v in snap.pe_history_approx.values() if v and v > 0]
     return round(statistics.median(vals), 2) if len(vals) >= 3 else None
 
@@ -41,7 +41,7 @@ def build_report(
     metrics: MetricsReport,
     score: ScoreResult,
     fair_value: FairValueResult,
-    benchmark: Optional[Benchmark] = None,
+    benchmark: Benchmark | None = None,
 ) -> dict:
     """Se skládá finalizovaný report (plain dict → serializovatelné JSON)."""
     return {
@@ -105,7 +105,7 @@ def build_report(
     }
 
 
-def export_json(reports: List[Dict[str, Any]], path: str | Path) -> Path:
+def export_json(reports: list[dict[str, Any]], path: str | Path) -> Path:
     """Zapíše reporty do souboru (list reportů, jeden JSON). Vrátí absolutní cestu."""
     p = Path(path).expanduser().resolve()
     p.parent.mkdir(parents=True, exist_ok=True)

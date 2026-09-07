@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .db import Database
 from .watchlist import _build_series, _ttm
@@ -50,11 +50,11 @@ def _ttm_dps(db: Database, ticker: str) -> float:
 
 def _check_condition(
     condition: str,
-    threshold: Optional[float],
+    threshold: float | None,
     price: float,
     db: Database,
     ticker: str,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """Vrátí ``(vyhodnoceno?, detail pro zprávu)``."""
     if condition == "below":
         hit = threshold is not None and price <= threshold
@@ -78,7 +78,7 @@ def _check_condition(
     return False, ""
 
 
-def evaluate_alerts(db: Database) -> List[Dict[str, Any]]:
+def evaluate_alerts(db: Database) -> list[dict[str, Any]]:
     """Vyhodnotí všechna aktivní upozornění proti cenám z DB.
 
     Vrací seznam vyhodnocených (triggered) upozornění; každé se označí
@@ -86,7 +86,7 @@ def evaluate_alerts(db: Database) -> List[Dict[str, Any]]:
     aktuální ceny v DB se přeskočí (není co porovnávat).
     """
     today = date.today().isoformat()
-    triggered: List[Dict[str, Any]] = []
+    triggered: list[dict[str, Any]] = []
 
     for alert in db.list_alerts(active_only=True):
         if alert.get("last_triggered") == today:
@@ -119,7 +119,7 @@ def evaluate_alerts(db: Database) -> List[Dict[str, Any]]:
     return triggered
 
 
-def _format_message(alert: Dict[str, Any], price: float, detail: str) -> str:
+def _format_message(alert: dict[str, Any], price: float, detail: str) -> str:
     """Čitelná zpráva pro oznámení (CLI / Telegram)."""
     cond = alert["condition"]
     if cond == "below":
@@ -131,7 +131,7 @@ def _format_message(alert: Dict[str, Any], price: float, detail: str) -> str:
     return f"{head}: {detail}"
 
 
-def add_alert(db: Database, ticker: str, condition: str, threshold: Optional[float] = None) -> int:
+def add_alert(db: Database, ticker: str, condition: str, threshold: float | None = None) -> int:
     """Přidá upozornění s validací podmínek a prahové hodnoty."""
     if condition not in VALID_CONDITIONS:
         raise ValueError(f"Neplatná podmínka {condition!r} — povolené: {', '.join(VALID_CONDITIONS)}")

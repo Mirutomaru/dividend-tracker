@@ -14,9 +14,10 @@ import random
 import re
 import statistics
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -35,7 +36,7 @@ class DataFetchError(RuntimeError):
     """Nedostatek dat pro smysluplnou analýzu tickeru."""
 
 
-def _to_float(v: Any) -> Optional[float]:
+def _to_float(v: Any) -> float | None:
     if v is None:
         return None
     try:
@@ -47,7 +48,7 @@ def _to_float(v: Any) -> Optional[float]:
     return f
 
 
-def _pick(df: Optional[pd.DataFrame], *candidates: str) -> Optional[float]:
+def _pick(df: pd.DataFrame | None, *candidates: str) -> float | None:
     """Vyzvedne nejnovější hodnotu řádku z ročního výkazu.
 
     Nejprve přesný (case-insensitive) název, pak fuzzy částečný zápis — providery
@@ -72,7 +73,7 @@ def _pick(df: Optional[pd.DataFrame], *candidates: str) -> Optional[float]:
     return None
 
 
-def resolve_fcf(fcf_direct: Optional[float], ocf: Optional[float], capex_signed: Optional[float]) -> Optional[float]:
+def resolve_fcf(fcf_direct: float | None, ocf: float | None, capex_signed: float | None) -> float | None:
     """Vyřeší FCF: preferuje hodnotu hlášenou direktně providerem, fallback je OCF − CapEx.
 
     ``capex_signed`` se předává tak, jak ho uvádí CF výkaz (záporné). Záporný FCF
@@ -101,7 +102,7 @@ def _retry(fn: Callable[[], Any], attempts: int = 3, delay: float = 1.5) -> Any:
     ``delay`` je základ — každý další pokus ho zdvojnásobí (1,5s → 3s → 6s …), navíc se
     přidá náhodný jitter (0–50 %), aby paralelní workeri nedorazili do providera synchronně.
     """
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
     for i in range(attempts):
         try:
             return fn()
@@ -155,7 +156,7 @@ def _fetch_independent(tk: str) -> dict[str, Any]:
     return out
 
 
-def _year_end_prices(hist: Optional[pd.DataFrame]) -> dict[int, float]:
+def _year_end_prices(hist: pd.DataFrame | None) -> dict[int, float]:
     """Závěrečná cena za každý kalendářní rok z denní historie."""
     if hist is None or hist.empty or "Close" not in hist.columns:
         return {}
@@ -328,7 +329,7 @@ def _snapshot_cache_path(ticker: str) -> Path:
     return _cache_path(f"snap_{ticker.strip().upper()}")
 
 
-def load_cached_snapshot(ticker: str, ttl_days: float = SNAPSHOT_TTL_DAYS) -> Optional[Snapshot]:
+def load_cached_snapshot(ticker: str, ttl_days: float = SNAPSHOT_TTL_DAYS) -> Snapshot | None:
     """Vrátí snapshot z disk cache, pokud je čerstvý (mladší než ``ttl_days``).
 
     Poškozená / stará cache se tichounce ignoruje a vrátí ``None`` — volající pak stáhne
@@ -361,7 +362,7 @@ def save_snapshot_cache(snap: Snapshot) -> None:
         log.warning("nelze zapsat snapshot cache %s: %s", snap.ticker, exc)
 
 
-def get_sector_benchmark(sector: Optional[str], force_refresh: bool = False) -> Optional[Benchmark]:
+def get_sector_benchmark(sector: str | None, force_refresh: bool = False) -> Benchmark | None:
     """Mediány P/E (TTM) a EV/EBITDA napříč peer universe daného sektoru.
 
     Výsledek se cache na 7 dní (disk), aby se peers nevytahovali při každém spuštění.

@@ -22,7 +22,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
-from typing import Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -41,9 +40,9 @@ def _years_between(date_from_iso: str, date_to_iso: str) -> float:
 
 
 def time_weighted_return(
-    value_series: List[Tuple[str, float]],
-    external_flows: Dict[str, float],
-) -> Optional[float]:
+    value_series: list[tuple[str, float]],
+    external_flows: dict[str, float],
+) -> float | None:
     """Chain-linking TWR v procentech (např. 12.3 == +12,3 %).
 
     ``value_series`` = seřazená dvojice ``(datum, V)`` — tržní hodnota portfolia
@@ -77,10 +76,10 @@ def time_weighted_return(
 
 
 def internal_rate_of_return(
-    cashflows: List[CashFlow],
-    terminal_value: Optional[float],
+    cashflows: list[CashFlow],
+    terminal_value: float | None,
     as_of_iso: str,
-) -> Optional[float]:
+) -> float | None:
     """Roční IRR v procentech (např. 9.8 == +9,8 % p.a.).
 
     ``cashflows`` = externí cash flow (buy záporné), ``terminal_value`` = současná
@@ -93,7 +92,7 @@ def internal_rate_of_return(
 
     t0 = flows[0].date_iso[:10]
     # Cash flow v čase (roky od prvního toku); terminální hodnota na konci.
-    terms: List[Tuple[float, float]] = [(_years_between(t0, c.date_iso), c.amount) for c in flows]
+    terms: list[tuple[float, float]] = [(_years_between(t0, c.date_iso), c.amount) for c in flows]
     t_end = max(_years_between(t0, as_of_iso[:10]), 1e-9)
     terms.append((t_end, terminal_value))
 

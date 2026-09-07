@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
 
 #: Výchozí adresář pro data (DB, zálohy, .env).
 DATA_DIR = Path(os.environ.get("DIVTRACK_DATA_DIR", "~/.cache/dividend-tracker")).expanduser()
@@ -28,9 +27,9 @@ DATA_DIR = Path(os.environ.get("DIVTRACK_DATA_DIR", "~/.cache/dividend-tracker")
 DEFAULT_ENV_FILE = DATA_DIR / ".env"
 
 
-def _parse_env_file(path: Path) -> Dict[str, str]:
+def _parse_env_file(path: Path) -> dict[str, str]:
     """Vykonalý parser ``.env`` — klíč=hodnota, komentáře #, volitelné uvozovky."""
-    values: Dict[str, str] = {}
+    values: dict[str, str] = {}
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
@@ -50,19 +49,19 @@ def _parse_env_file(path: Path) -> Dict[str, str]:
     return values
 
 
-def find_env_files() -> List[Path]:
+def find_env_files() -> list[Path]:
     """Cesty k existujícím ``.env`` souborům v pořadí hledání."""
     candidates = [Path.cwd() / ".env", DEFAULT_ENV_FILE]
     return [p for p in candidates if p.is_file()]
 
 
-def load_env(override: bool = False) -> List[Path]:
+def load_env(override: bool = False) -> list[Path]:
     """Načte ``.env`` soubory do prostředí (bez přepisování již nastavených proměnných).
 
     Vrátí seznam načtených souborů. Volá se na startu CLI i web serveru, aby
     konfigurace fungovala bez nutnosti ručně exportovat proměnné.
     """
-    loaded: List[Path] = []
+    loaded: list[Path] = []
     for path in find_env_files():
         for key, value in _parse_env_file(path).items():
             if override or key not in os.environ:
@@ -71,10 +70,10 @@ def load_env(override: bool = False) -> List[Path]:
     return loaded
 
 
-def write_env_value(key: str, value: str, path: Optional[Path] = None) -> Path:
+def write_env_value(key: str, value: str, path: Path | None = None) -> Path:
     """Zapíše/aktualizuje klíč v ``.env`` souboru (zachová ostatní řádky a komentáře)."""
     p = Path(path) if path else DEFAULT_ENV_FILE
-    lines: List[str] = []
+    lines: list[str] = []
     if p.is_file():
         lines = p.read_text(encoding="utf-8").splitlines()
 
@@ -96,13 +95,13 @@ def write_env_value(key: str, value: str, path: Optional[Path] = None) -> Path:
     return p
 
 
-def remove_env_value(key: str, path: Optional[Path] = None) -> bool:
+def remove_env_value(key: str, path: Path | None = None) -> bool:
     """Odebere klíč z ``.env`` souboru. Vrátí True, pokud byl nalezen."""
     p = Path(path) if path else DEFAULT_ENV_FILE
     if not p.is_file():
         return False
     lines = p.read_text(encoding="utf-8").splitlines()
-    kept: List[str] = []
+    kept: list[str] = []
     found = False
     for line in lines:
         stripped = line.strip()
@@ -116,7 +115,7 @@ def remove_env_value(key: str, path: Optional[Path] = None) -> bool:
     return found
 
 
-def mask_secret(value: Optional[str]) -> str:
+def mask_secret(value: str | None) -> str:
     """Zamaskuje tajnou hodnotu pro zobrazení (ukáže jen první 4 a poslední 2 znaky)."""
     if not value:
         return "(nenastaveno)"

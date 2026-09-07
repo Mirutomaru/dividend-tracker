@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import statistics
-from typing import Optional
 
 from ..models import MetricsReport, Snapshot
 from .dividends import cagr, dividend_streak, full_years
 from .sectors import is_reit
 
 
-def _safe_div(a: Optional[float], b: Optional[float]) -> Optional[float]:
+def _safe_div(a: float | None, b: float | None) -> float | None:
     if a is None or b is None or b == 0:
         return None
     try:

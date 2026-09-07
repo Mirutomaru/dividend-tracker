@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 SAFETY_DISPLAY = {"green": "ZELENÁ", "yellow": "ŽLUTÁ", "red": "ČERVENÁ"}
 
@@ -15,18 +15,18 @@ def _c(color: str, s: str) -> str:
     return f"\033[{codes.get(color, 0)}m{s}\033[0m"
 
 
-def fmt(v: Optional[float], nd: int = 2, suffix: str = "", dash: str = "—") -> str:
+def fmt(v: float | None, nd: int = 2, suffix: str = "", dash: str = "—") -> str:
     if v is None:
         return dash
     s = f"{v:.{nd}f}"
     return f"{s}{suffix}"
 
 
-def _flag_color(flag: Optional[str]) -> str:
+def _flag_color(flag: str | None) -> str:
     return {"green": "g", "yellow": "y", "red": "r"}.get(flag or "", "")
 
 
-def format_ticker_block(report: Dict[str, Any], color: bool = True) -> str:
+def format_ticker_block(report: dict[str, Any], color: bool = True) -> str:
     """Detailní blok jednoho tickeru (používá i GUI detail pane)."""
     m = report["metrics"]
     div, val, health = m["dividend"], m["valuation"], m["health"]
@@ -34,7 +34,7 @@ def format_ticker_block(report: Dict[str, Any], color: bool = True) -> str:
     fv = report["fair_value"]
     cur = report.get("currency", "USD")
 
-    lines: List[str] = []
+    lines: list[str] = []
     name = (report["company"].get("name") or "").strip()
     sector = (report["company"].get("sector") or "")
     head = f" {report['ticker']} — {name}" if name else f" {report['ticker']}"
@@ -132,12 +132,12 @@ def format_ticker_block(report: Dict[str, Any], color: bool = True) -> str:
     return "\n".join(lines)
 
 
-def format_summary_table(reports: List[Dict[str, Any]], color: bool = True) -> str:
+def format_summary_table(reports: list[dict[str, Any]], color: bool = True) -> str:
     """Kompaktní srovnávací tabulka všech tickerů."""
     if not reports:
         return "(žádné reporty)"
 
-    def row(r: Dict[str, Any]) -> List[str]:
+    def row(r: dict[str, Any]) -> list[str]:
         sc = r["score"]
         fv = r["fair_value"]
         zone = (
@@ -165,7 +165,7 @@ def format_summary_table(reports: List[Dict[str, Any]], color: bool = True) -> s
     widths = [max(len(headers[i]), *(len(r[i]) for r in rows)) for i in range(len(headers))]
     sep = "  "
 
-    def line(cells: List[str]) -> str:
+    def line(cells: list[str]) -> str:
         return sep.join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
 
     out = [line(headers), line(["-" * w for w in widths])]
@@ -185,7 +185,7 @@ def format_summary_table(reports: List[Dict[str, Any]], color: bool = True) -> s
     return "\n".join(out)
 
 
-def format_watchlist_table(rows: List[Dict[str, Any]]) -> str:
+def format_watchlist_table(rows: list[dict[str, Any]]) -> str:
     """Srovnávací tabulka watchlisty z lokální DB (bez externích volání).
 
     Sloupec YIELD ukazuje hrubý i čistý yield po srážkové dani podle země
@@ -195,7 +195,7 @@ def format_watchlist_table(rows: List[Dict[str, Any]]) -> str:
     if not rows:
         return "(watchlista je prázdná)"
 
-    def row(r: Dict[str, Any]) -> List[str]:
+    def row(r: dict[str, Any]) -> list[str]:
         gross = r.get("yield_pct")
         net = r.get("net_yield_pct")
         # Sazba neznámá/nulová → net == hrubý, duplicitní sloupec nemá smysl.
@@ -218,7 +218,7 @@ def format_watchlist_table(rows: List[Dict[str, Any]]) -> str:
     widths = [max(len(headers[i]), *(len(r[i]) for r in rows_out)) for i in range(len(headers))]
     sep = "  "
 
-    def line(cells: List[str]) -> str:
+    def line(cells: list[str]) -> str:
         return sep.join(c.ljust(widths[i]) for i, c in enumerate(cells)).rstrip()
 
     out = [line(headers), line(["-" * w for w in widths])]

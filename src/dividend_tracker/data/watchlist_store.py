@@ -32,7 +32,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .db import Database
 
@@ -44,7 +44,7 @@ DEFAULT_WATCHLIST_FILE = Path(
 ).expanduser()
 
 
-def _atomic_write(path: Path, payload: Dict[str, Any]) -> None:
+def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     """Atomický zápis (dočasný soubor + rename) — nikdy nezůstane poloviční soubor."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".watchlist-", suffix=".tmp")
@@ -89,7 +89,7 @@ def import_watchlist_file(db: Database, path: Path | str = DEFAULT_WATCHLIST_FIL
         return 0
     try:
         payload = json.loads(p.read_text(encoding="utf-8"))
-        items: List[Dict[str, Any]] = payload.get("tickers", []) if isinstance(payload, dict) else []
+        items: list[dict[str, Any]] = payload.get("tickers", []) if isinstance(payload, dict) else []
     except (json.JSONDecodeError, OSError) as exc:
         log.error("watchlist soubor nelze přečíst (%s): %s", p, exc)
         return 0
@@ -104,7 +104,7 @@ def import_watchlist_file(db: Database, path: Path | str = DEFAULT_WATCHLIST_FIL
     return added
 
 
-def auto_add_to_watchlist(db: Database, tickers: List[str]) -> int:
+def auto_add_to_watchlist(db: Database, tickers: list[str]) -> int:
     """Automaticky přidá tickery do trvalé watchlisty (idempotentní).
 
     Volá se při analýze i syncu — seznam se tím sám budoval a po každé změně

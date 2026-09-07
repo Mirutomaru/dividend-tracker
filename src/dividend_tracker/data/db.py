@@ -19,10 +19,11 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -191,13 +192,13 @@ class Database:
     def upsert_stock(
         self,
         ticker: str,
-        name: Optional[str] = None,
-        currency: Optional[str] = None,
-        exchange: Optional[str] = None,
-        country: Optional[str] = None,
-        sector: Optional[str] = None,
-        industry: Optional[str] = None,
-        fundamentals_json: Optional[str] = None,
+        name: str | None = None,
+        currency: str | None = None,
+        exchange: str | None = None,
+        country: str | None = None,
+        sector: str | None = None,
+        industry: str | None = None,
+        fundamentals_json: str | None = None,
         mark_fundamental_update: bool = True,
     ) -> None:
         with self._conn() as conn:
@@ -236,12 +237,12 @@ class Database:
                 "UPDATE stocks SET last_dividend_sync=? WHERE ticker=?", (time.time(), ticker)
             )
 
-    def get_stock(self, ticker: str) -> Optional[Dict[str, Any]]:
+    def get_stock(self, ticker: str) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM stocks WHERE ticker=?", (ticker,)).fetchone()
             return dict(row) if row else None
 
-    def list_stocks(self) -> List[Dict[str, Any]]:
+    def list_stocks(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute("SELECT * FROM stocks ORDER BY ticker").fetchall()
             return [dict(r) for r in rows]
@@ -265,9 +266,9 @@ class Database:
         ticker: str,
         ex_date: str,
         dividend_amount: float,
-        payment_date: Optional[str] = None,
-        record_date: Optional[str] = None,
-        frequency: Optional[str] = None,
+        payment_date: str | None = None,
+        record_date: str | None = None,
+        frequency: str | None = None,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
@@ -282,14 +283,14 @@ class Database:
                 (ticker, ex_date, payment_date, record_date, dividend_amount, frequency),
             )
 
-    def get_dividends(self, ticker: str) -> List[Dict[str, Any]]:
+    def get_dividends(self, ticker: str) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM dividends_history WHERE ticker=? ORDER BY ex_date DESC", (ticker,)
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def replace_dividends(self, rows: List[Dict[str, Any]]) -> int:
+    def replace_dividends(self, rows: list[dict[str, Any]]) -> int:
         """Nahradí kompletní dividendovou historii pro všechny tickery v ``rows``.
 
         Používá se při batch syncu (FMP vrátí celou historii najednou) — staré
@@ -324,7 +325,7 @@ class Database:
             )
         return len(normalized)
 
-    def replace_calendar(self, rows: List[Dict[str, Any]]) -> int:
+    def replace_calendar(self, rows: list[dict[str, Any]]) -> int:
         """Nahradí plánované výplaty (budoucí ex-dates) pro tickery v ``rows``."""
         if not rows:
             return 0
@@ -357,10 +358,10 @@ class Database:
         self,
         ticker: str,
         ex_date: str,
-        dividend_amount: Optional[float],
-        payment_date: Optional[str] = None,
-        record_date: Optional[str] = None,
-        frequency: Optional[str] = None,
+        dividend_amount: float | None,
+        payment_date: str | None = None,
+        record_date: str | None = None,
+        frequency: str | None = None,
     ) -> None:
         with self._conn() as conn:
             conn.execute(
@@ -375,7 +376,7 @@ class Database:
                 (ticker, ex_date, payment_date, record_date, dividend_amount, frequency),
             )
 
-    def get_calendar(self, ticker: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_calendar(self, ticker: str | None = None) -> list[dict[str, Any]]:
         with self._conn() as conn:
             if ticker:
                 rows = conn.execute(
@@ -388,7 +389,7 @@ class Database:
     # -------------------------------------------------------------------- quotes
 
     def upsert_quote(
-        self, ticker: str, current_price: Optional[float], change: Optional[float] = None, volume: Optional[int] = None
+        self, ticker: str, current_price: float | None, change: float | None = None, volume: int | None = None
     ) -> None:
         with self._conn() as conn:
             conn.execute(
@@ -402,14 +403,14 @@ class Database:
                 (ticker, current_price, change, volume, time.time()),
             )
 
-    def get_quote(self, ticker: str) -> Optional[Dict[str, Any]]:
+    def get_quote(self, ticker: str) -> dict[str, Any] | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM quotes WHERE ticker=?", (ticker,)).fetchone()
             return dict(row) if row else None
 
     # --------------------------------------------------------------- api_usage
 
-    def record_api_call(self, provider: str, daily_limit: Optional[int] = None) -> Dict[str, Any]:
+    def record_api_call(self, provider: str, daily_limit: int | None = None) -> dict[str, Any]:
         """Zapíše jedno volání a vrátí aktuální stav čítače pro daný den."""
         day = _utc_day()
         with self._conn() as conn:
@@ -431,7 +432,7 @@ class Database:
                 )
             return self.get_api_usage(provider)
 
-    def get_api_usage(self, provider: str) -> Dict[str, Any]:
+    def get_api_usage(self, provider: str) -> dict[str, Any]:
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT * FROM api_usage WHERE provider=? AND day=?", (provider, _utc_day())
@@ -453,7 +454,7 @@ class Database:
 
     # ----------------------------------------------------------------- watchlist
 
-    def upsert_watchlist(self, ticker: str, note: Optional[str] = None) -> None:
+    def upsert_watchlist(self, ticker: str, note: str | None = None) -> None:
         """Přidá ticker do trvalé watchlisty (idempotentní)."""
         with self._conn() as conn:
             conn.execute(
@@ -467,7 +468,7 @@ class Database:
         with self._conn() as conn:
             conn.execute("DELETE FROM watchlist WHERE ticker=?", (ticker.upper(),))
 
-    def list_watchlist(self) -> List[Dict[str, Any]]:
+    def list_watchlist(self) -> list[dict[str, Any]]:
         """Trvalá watchlista seřazená abecedně."""
         with self._conn() as conn:
             rows = conn.execute(
@@ -484,7 +485,7 @@ class Database:
 
     # ----------------------------------------------------------------- reports
 
-    def save_report(self, report: Dict[str, Any]) -> None:
+    def save_report(self, report: dict[str, Any]) -> None:
         """Uloží/aktualizuje poslední analytický report pro ticker (upsert)."""
         tk = str(report.get("ticker") or "").upper()
         if not tk:
@@ -500,13 +501,13 @@ class Database:
                 (tk, json.dumps(stored, ensure_ascii=False), time.time()),
             )
 
-    def list_reports(self) -> List[Dict[str, Any]]:
+    def list_reports(self) -> list[dict[str, Any]]:
         """Všechny uložené reporty seřazené abecedně podle tickera."""
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT ticker, report_json FROM reports ORDER BY ticker"
             ).fetchall()
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for r in rows:
             try:
                 out.append(json.loads(r["report_json"]))
@@ -525,8 +526,8 @@ class Database:
         self,
         ticker: str,
         shares: float,
-        avg_cost: Optional[float] = None,
-        currency: Optional[str] = None,
+        avg_cost: float | None = None,
+        currency: str | None = None,
     ) -> None:
         """Vloží/aktualizuje drženou pozici. ``shares <= 0`` pozici smaže.
 
@@ -541,7 +542,7 @@ class Database:
             row = conn.execute(
                 "SELECT shares FROM portfolio WHERE ticker=?", (tk,)
             ).fetchone()
-            old_shares: Optional[float] = float(row["shares"]) if row else None
+            old_shares: float | None = float(row["shares"]) if row else None
 
             if shares is not None and shares <= 0:
                 # Kompletní prodej — záznam sell za poslední známou cenou.
@@ -603,7 +604,7 @@ class Database:
         with self._conn() as conn:
             conn.execute("DELETE FROM portfolio WHERE ticker=?", (ticker.upper(),))
 
-    def list_positions(self) -> List[Dict[str, Any]]:
+    def list_positions(self) -> list[dict[str, Any]]:
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT * FROM portfolio ORDER BY ticker"
@@ -617,9 +618,9 @@ class Database:
         ticker: str,
         kind: str,
         date_iso: str,
-        shares: Optional[float] = None,
-        price: Optional[float] = None,
-        amount: Optional[float] = None,
+        shares: float | None = None,
+        price: float | None = None,
+        amount: float | None = None,
     ) -> None:
         """Zapíše transakci portfolia (buy/sell/dividend) pro výpočet TWR/IRR.
 
@@ -634,7 +635,7 @@ class Database:
                 (ticker.upper(), kind, date_iso, shares, price, amount, time.time()),
             )
 
-    def list_transactions(self, ticker: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_transactions(self, ticker: str | None = None) -> list[dict[str, Any]]:
         """Transakce portfolia seřazené podle data (nejstarší první)."""
         with self._conn() as conn:
             if ticker is not None:
@@ -648,7 +649,7 @@ class Database:
                 ).fetchall()
             return [dict(r) for r in rows]
 
-    def clear_transactions(self, ticker: Optional[str] = None) -> None:
+    def clear_transactions(self, ticker: str | None = None) -> None:
         """Smaže transakce (celé portfolio nebo jeden ticker)."""
         with self._conn() as conn:
             if ticker is not None:
@@ -660,7 +661,7 @@ class Database:
 
     # ----------------------------------------------------------- price_history
 
-    def record_price_snapshot(self, ticker: str, date_iso: str, close: Optional[float]) -> None:
+    def record_price_snapshot(self, ticker: str, date_iso: str, close: float | None) -> None:
         """Zapíše (nebo aktualizuje) denní snapshot ceny pro dané datum."""
         if close is None:
             return
@@ -671,7 +672,7 @@ class Database:
                 (ticker.upper(), date_iso, close),
             )
 
-    def get_price_history(self, ticker: str, days: int = 365) -> List[Dict[str, Any]]:
+    def get_price_history(self, ticker: str, days: int = 365) -> list[dict[str, Any]]:
         """Denní snapshoty za posledních ``days`` dní, nejnovější první."""
         cutoff = (datetime.now(timezone.utc).timestamp() - days * 86400.0)
         with self._conn() as conn:
@@ -681,7 +682,7 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def price_stats_52w(self, ticker: str) -> Optional[Dict[str, Any]]:
+    def price_stats_52w(self, ticker: str) -> dict[str, Any] | None:
         """Statistika za posledních 365 dní: min/max cena, drawdown od maxima, percentil.
 
         Percentil = podíl dnů, kdy byla cena NÍŽŠÍ než aktuální (0–100).
@@ -710,7 +711,7 @@ class Database:
 
     # -------------------------------------------------------------------- alerts
 
-    def add_alert(self, ticker: str, condition: str, threshold: Optional[float] = None) -> int:
+    def add_alert(self, ticker: str, condition: str, threshold: float | None = None) -> int:
         """Přidá upozornění. ``condition`` ∈ {below, above, buy_zone}."""
         with self._conn() as conn:
             cur = conn.execute(
@@ -719,7 +720,7 @@ class Database:
             )
             return int(cur.lastrowid or 0)
 
-    def list_alerts(self, active_only: bool = True) -> List[Dict[str, Any]]:
+    def list_alerts(self, active_only: bool = True) -> list[dict[str, Any]]:
         with self._conn() as conn:
             if active_only:
                 rows = conn.execute(
@@ -748,12 +749,12 @@ class Database:
 
     # ------------------------------------------------------------------ settings
 
-    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
         with self._conn() as conn:
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             return row["value"] if row else default
 
-    def list_settings(self) -> Dict[str, str]:
+    def list_settings(self) -> dict[str, str]:
         """Všechna nastavení jako slovník ``{key: value}``."""
         with self._conn() as conn:
             rows = conn.execute("SELECT key, value FROM settings").fetchall()

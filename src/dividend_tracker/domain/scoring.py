@@ -8,7 +8,7 @@ snížit skóre). Red safety flag omezuje skóre na ≤39, dividend trap na ≤2
 from __future__ import annotations
 
 import statistics
-from typing import List, Optional, Sequence, Tuple
+from collections.abc import Sequence
 
 from ..models import Benchmark, MetricsReport, ScoreBreakdown, ScoreResult, Snapshot
 from .sectors import is_reit, is_reit_like
@@ -20,17 +20,17 @@ SIGNAL_NO_DIVIDEND = "NO_DIVIDENDS"
 BLOCK_WEIGHTS = {"sustainability": 40, "valuation": 35, "quality_growth": 25}
 
 
-def _clip01(x: Optional[float]) -> Optional[float]:
+def _clip01(x: float | None) -> float | None:
     return None if x is None else max(0.0, min(1.0, float(x)))
 
 
-def _reit_cash_coverage(m: MetricsReport) -> Optional[float]:
+def _reit_cash_coverage(m: MetricsReport) -> float | None:
     """Nejkonzervativnější (nejvyšší) dostupný FFO/AFFO payout ratio pro REIT safety logiku."""
     vals = [v for v in (m.ffo_payout_pct, m.affo_payout_pct) if v is not None]
     return max(vals) if vals else None
 
 
-def _lower_is_better(value: Optional[float], best: float, worst: float) -> Optional[float]:
+def _lower_is_better(value: float | None, best: float, worst: float) -> float | None:
     """Lineární rampa 1→0 pro „nižší je lepší“ (1 při <=best, 0 při >=worst)."""
     if value is None:
         return None
@@ -39,7 +39,7 @@ def _lower_is_better(value: Optional[float], best: float, worst: float) -> Optio
     return _clip01((worst - float(value)) / (worst - best))
 
 
-def _higher_is_better(value: Optional[float], worst: float, best: float) -> Optional[float]:
+def _higher_is_better(value: float | None, worst: float, best: float) -> float | None:
     """Lineární rampa 0→1 pro „vyšší je lepší“."""
     if value is None:
         return None
@@ -48,7 +48,7 @@ def _higher_is_better(value: Optional[float], worst: float, best: float) -> Opti
     return _clip01((float(value) - worst) / (best - worst))
 
 
-def _block_score(items: Sequence[Tuple[str, float, Optional[float]]]) -> Optional[float]:
+def _block_score(items: Sequence[tuple[str, float, float | None]]) -> float | None:
     """Skóre bloku 0–100; None, pokud není žádná dostupná položka."""
     avail = [(w, s) for _, w, s in items if s is not None]
     total_w = sum(w for w, _ in avail)
@@ -57,13 +57,13 @@ def _block_score(items: Sequence[Tuple[str, float, Optional[float]]]) -> Optiona
     return round(sum(w * s for w, s in avail) / total_w * 100.0, 1)
 
 
-def compute_safety_flag(snap: Snapshot, m: MetricsReport) -> Tuple[Optional[str], List[str]]:
+def compute_safety_flag(snap: Snapshot, m: MetricsReport) -> tuple[str | None, list[str]]:
     """Dividend Safety Flag dle specifikace (zelená/žlutá/červená).
 
     REITY se posuzují jinak: EPS payout je ignorován a hotovostní krytí dividend
     měří FFO/AFFO payout ratio (payout > 100 % = červená, < 75 % = součást zelené).
     """
-    reasons: List[str] = []
+    reasons: list[str] = []
     red = False
 
     if is_reit(snap.sector):
@@ -130,8 +130,8 @@ def compute_safety_flag(snap: Snapshot, m: MetricsReport) -> Tuple[Optional[str]
     return "yellow", reasons
 
 
-def _detect_signals(snap: Snapshot, m: MetricsReport, safety: Optional[str]) -> List[str]:
-    signals: List[str] = []
+def _detect_signals(snap: Snapshot, m: MetricsReport, safety: str | None) -> list[str]:
+    signals: list[str] = []
     if is_reit(snap.sector):
         cov = _reit_cash_coverage(m)
         trap_breach = (cov is not None and cov > 100.0) or (
@@ -149,7 +149,7 @@ def _detect_signals(snap: Snapshot, m: MetricsReport, safety: Optional[str]) -> 
 
 
 def compute_score(
-    snap: Snapshot, m: MetricsReport, bench: Optional[Benchmark] = None
+    snap: Snapshot, m: MetricsReport, bench: Benchmark | None = None
 ) -> ScoreResult:
     """Celkové skóre (0–100) + flagy a signály. Viz modul docstring pro metodologii."""
     # Firma nevyplácí dividendu → model se nepoužije.
@@ -163,7 +163,7 @@ def compute_score(
     growth_streak_pts = min(max(cagr5, 0.0) / 5.0, 1.0) * 3.0 + min(m.streak_years / 10.0, 1.0) * 3.0
 
     reit = is_reit(snap.sector)
-    fcf_payout_score: Optional[float]
+    fcf_payout_score: float | None
     if snap.fcf_ttm is not None and snap.fcf_ttm <= 0:
         fcf_payout_score = 0.0  # záporné FCF se trestá, nezapočítává se jako "chybí"
     else:
@@ -188,7 +188,7 @@ def compute_score(
         ]
 
     # P/E vs referenční hodnoty (odvětvový medián + aprox. 5letý medián firmy); bereme nepříznivější
-    pe_refs: List[float] = []
+    pe_refs: list[float] = []
     bench_pe = bench.median_pe_ttm if bench else None
     if bench_pe is not None and bench_pe > 0:
         pe_refs.append(bench_pe)
@@ -214,7 +214,7 @@ def compute_score(
         ("fcf_yield", 7, _higher_is_better(m.fcf_yield_pct, 3.0, 10.0)),
     ]
 
-    fcf_health: Optional[float] = None
+    fcf_health: float | None = None
     if reit:
         cov = _reit_cash_coverage(m)
         if cov is not None:
@@ -229,7 +229,7 @@ def compute_score(
             pts = 5.0 + (3.0 if m.fcf_payout_pct is not None and m.fcf_payout_pct <= 70.0 else 0.0)
             fcf_health = pts / 8.0
 
-    div_growth_q: Optional[float] = None
+    div_growth_q: float | None = None
     if m.cagr_5y_pct is not None:
         c = m.cagr_5y_pct
         div_growth_q = 1.0 if c >= 5 else 0.6 if c >= 2 else 0.2 if c >= 0 else 0.0
@@ -254,7 +254,7 @@ def compute_score(
     signals = _detect_signals(snap, m, safety)
 
     # Omezení skóre podle rizikových stavů (specifikace logiky hodnocení).
-    cap_reasons: List[str] = []
+    cap_reasons: list[str] = []
     if total is not None:
         if safety == "red":
             total = min(total, 39.0)

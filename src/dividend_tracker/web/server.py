@@ -40,7 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..config import load_env as _load_env
 
@@ -82,10 +82,10 @@ class Job:
     total: int
     status: str = "running"  # running | done
     created_at: float = field(default_factory=time.time)
-    results: List[Dict[str, Any]] = field(default_factory=list)
-    extra: Dict[str, Any] = field(default_factory=dict)  # doplňkové pole (např. summary sync jobu)
+    results: list[dict[str, Any]] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)  # doplňkové pole (např. summary sync jobu)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "status": self.status,
@@ -100,16 +100,16 @@ class JobManager:
     """Spravuje asynchronní analýzy tickerů v thread poolu."""
 
     def __init__(self, max_workers: int = 6) -> None:
-        self._jobs: Dict[str, Job] = {}
+        self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="divtrack")
 
     def submit(
         self,
-        tickers: List[str],
+        tickers: list[str],
         required_return_pct: float,
         use_benchmark: bool,
-        db: Optional[Database] = None,
+        db: Database | None = None,
     ) -> Job:
         """Spustí analýzu; s ``db`` se každý hotový report perzistuje do lokální DB."""
         job = Job(id=uuid.uuid4().hex[:12], total=len(tickers))
@@ -119,7 +119,7 @@ class JobManager:
             self._executor.submit(self._run_one, job, ticker, required_return_pct, use_benchmark, db)
         return job
 
-    def submit_sync(self, db: Database, tickers: List[str], force: bool) -> Job:
+    def submit_sync(self, db: Database, tickers: list[str], force: bool) -> Job:
         """Asynchronní cache-first synchronizace dat do DB (fundamenty + ceny)."""
         job = Job(id=uuid.uuid4().hex[:12], total=len(tickers))
         with self._lock:
@@ -127,7 +127,7 @@ class JobManager:
         self._executor.submit(self._run_sync, job, db, tickers, force)
         return job
 
-    def _run_sync(self, job: Job, db: Database, tickers: List[str], force: bool) -> None:
+    def _run_sync(self, job: Job, db: Database, tickers: list[str], force: bool) -> None:
         try:
             summary = sync_all(db, tickers, force=force)
             with self._lock:
@@ -141,10 +141,10 @@ class JobManager:
 
     def submit_scan(
         self,
-        tickers: List[str],
+        tickers: list[str],
         required_return_pct: float,
         use_benchmark: bool,
-        db: Optional[Database] = None,
+        db: Database | None = None,
     ) -> Job:
         """Asynchronní scan (jako CLI ``divtrack scan``): analyzuje a na konci
         vyfiltruje akce se zeleným safety flagem + signálem BUY_ZONE."""
@@ -177,7 +177,7 @@ class JobManager:
                 return
             time.sleep(0.1)
 
-    def get(self, job_id: str) -> Optional[Job]:
+    def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
 
@@ -187,11 +187,11 @@ class JobManager:
         ticker: str,
         required_return_pct: float,
         use_benchmark: bool,
-        db: Optional[Database] = None,
+        db: Database | None = None,
     ) -> None:
         try:
             report = analyze_ticker(ticker, required_return_pct=required_return_pct, use_benchmark=use_benchmark)
-            entry: Dict[str, Any] = {"ticker": ticker, "report": report}
+            entry: dict[str, Any] = {"ticker": ticker, "report": report}
         except DataFetchError as exc:
             log.warning("job %s: data nedostupná pro %s: %s", job.id, ticker, exc)
             entry = {"ticker": ticker, "error": f"Nedostupná data: {exc}"}
@@ -222,7 +222,7 @@ class WebApp(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ util
 
-    def _read_json_body(self) -> Optional[Dict[str, Any]]:
+    def _read_json_body(self) -> dict[str, Any] | None:
         """Přečte a parsuje JSON tělo requestu; vrací ``None`` při chybě (400 už odesláno)."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -236,7 +236,7 @@ class WebApp(BaseHTTPRequestHandler):
             return None
         return payload
 
-    def _valid_ticker(self, value: Any) -> Optional[str]:
+    def _valid_ticker(self, value: Any) -> str | None:
         """Normalizuje ticker na uppercase; vrací ``None`` pokud neplatný (400 odesláno)."""
         t = str(value or "").strip().upper()
         if not TICKER_RE.match(t):
@@ -244,7 +244,7 @@ class WebApp(BaseHTTPRequestHandler):
             return None
         return t
 
-    def _send_json(self, payload: Dict[str, Any], status: int = 200) -> None:
+    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -499,7 +499,7 @@ class WebApp(BaseHTTPRequestHandler):
         if not isinstance(tickers_raw, list) or not tickers_raw:
             self._send_error_json(400, "Pole 'tickers' musí být neprázdný seznam.")
             return
-        tickers: List[str] = []
+        tickers: list[str] = []
         for item in tickers_raw[:MAX_TICKERS_PER_JOB]:
             t = str(item).strip().upper()
             if not TICKER_RE.match(t):
@@ -533,7 +533,7 @@ class WebApp(BaseHTTPRequestHandler):
         if not isinstance(tickers_raw, list) or not tickers_raw:
             self._send_error_json(400, "Pole 'tickers' musí být neprázdný seznam.")
             return
-        tickers: List[str] = []
+        tickers: list[str] = []
         for item in tickers_raw[:MAX_TICKERS_PER_JOB]:
             t = str(item).strip().upper()
             if not TICKER_RE.match(t):
@@ -630,7 +630,7 @@ class WebApp(BaseHTTPRequestHandler):
             return
 
         tickers_raw = payload.get("tickers") or []
-        tickers: List[str] = []
+        tickers: list[str] = []
         if isinstance(tickers_raw, list) and tickers_raw:
             for item in tickers_raw[:MAX_TICKERS_PER_JOB]:
                 t = str(item).strip().upper()
@@ -714,7 +714,7 @@ class WebApp(BaseHTTPRequestHandler):
 def create_app(
     host: str = "127.0.0.1",
     port: int = 8742,
-    job_manager: Optional[JobManager] = None,
+    job_manager: JobManager | None = None,
     db_path: Path | str | None = None,
 ) -> ThreadingHTTPServer:
     """Vytvoří HTTP server s injektovaným :class:`JobManager` a lokální DB."""

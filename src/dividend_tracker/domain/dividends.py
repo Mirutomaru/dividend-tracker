@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
-
 import pandas as pd
 
 
 def split_adjust_dividends(
-    divs: Optional[pd.Series],
-    splits: Optional["pd.Series | pd.DataFrame"] = None,
+    divs: pd.Series | None,
+    splits: pd.Series | pd.DataFrame | None = None,
 ) -> pd.Series:
     """Upraví surovou historii dividend o akciové splity (srovnatelný DPS na aktuální počet akcií).
 
@@ -56,7 +54,7 @@ def split_adjust_dividends(
     return out
 
 
-def aggregate_dividends(series: "pd.Series | None") -> Tuple[Dict[int, float], Dict[int, int], Optional[float]]:
+def aggregate_dividends(series: pd.Series | None) -> tuple[dict[int, float], dict[int, int], float | None]:
     """Zahrubí surovou sérii plateb dividend (DatetimeIndex, hodnota = DPS za jednu výplatu).
 
     Vrátí ``(dps_per_fiscal_year, payment_counts, dps_ttm)``.
@@ -66,8 +64,8 @@ def aggregate_dividends(series: "pd.Series | None") -> Tuple[Dict[int, float], D
     - TTM okno = 365 dnů zpět od POSLEDNÍ záznamu v sérii (nikoli "dnes"), aby starší
       série nedávala zavádějící nulu.
     """
-    annual: Dict[int, float] = {}
-    counts: Dict[int, int] = {}
+    annual: dict[int, float] = {}
+    counts: dict[int, int] = {}
     if series is None or len(series) == 0:
         return {}, {}, 0.0
 
@@ -91,7 +89,7 @@ def aggregate_dividends(series: "pd.Series | None") -> Tuple[Dict[int, float], D
     return annual, counts, round(ttm, 4)
 
 
-def full_years(annual_dps: Dict[int, float], payment_counts: Dict[int, int]) -> Dict[int, float]:
+def full_years(annual_dps: dict[int, float], payment_counts: dict[int, int]) -> dict[int, float]:
     """Roky s "plným" rokem plateb (typický počet výplat).
 
     Nejnovější rok může být nekompletní (firma tečálně platí) — ten se ze streaku/CAGR
@@ -100,14 +98,14 @@ def full_years(annual_dps: Dict[int, float], payment_counts: Dict[int, int]) -> 
     if not payment_counts:
         return dict(annual_dps)
     # mode počtu plateb (při remě vyšší počet — konzervativněji)
-    freq: Dict[int, int] = {}
+    freq: dict[int, int] = {}
     for c in payment_counts.values():
         freq[c] = freq.get(c, 0) + 1
     typical = max(sorted(freq), key=lambda c: (freq[c], c))
     return {y: v for y, v in annual_dps.items() if payment_counts.get(y, 0) >= typical}
 
 
-def cagr(annual_full: Dict[int, float], years: int) -> Optional[float]:
+def cagr(annual_full: dict[int, float], years: int) -> float | None:
     """CAGR dividendy za ``years`` let mezi NEJNOVĚJŠÍM plným rokem a rokem o ``years`` dřív.
 
     Vrací procenta (např. 14.9 == +14,9 %/rok) nebo None, pokud data nestačí.
@@ -128,7 +126,7 @@ def cagr(annual_full: Dict[int, float], years: int) -> Optional[float]:
     return round(((end_v / start_v) ** (1.0 / n) - 1.0) * 100.0, 2)
 
 
-def dividend_streak(annual_full: Dict[int, float]) -> int:
+def dividend_streak(annual_full: dict[int, float]) -> int:
     """Počet po sobě jdoucích let růstu výplaty (každý rok vyšší než předchozí).
 
     Počítá se od nejnovějšího plného roku zpět; rok s poklesem nebo nulou streak

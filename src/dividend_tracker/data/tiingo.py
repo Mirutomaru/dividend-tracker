@@ -30,7 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .db import Database
 
@@ -65,7 +65,7 @@ class TiingoLimitExceeded(TiingoError):
     """Denní limit volání vyčerpán — data se už dnes netaží z Tiingo."""
 
 
-def get_api_key() -> Optional[str]:
+def get_api_key() -> str | None:
     return os.environ.get("TIINGO_API_KEY", "").strip() or None
 
 
@@ -104,7 +104,7 @@ class TiingoCacheClient:
     vyčerpání limitu se vrací ``False`` a sync přejde na fallback provider.
     """
 
-    def __init__(self, db: Database, api_key: Optional[str] = None) -> None:
+    def __init__(self, db: Database, api_key: str | None = None) -> None:
         self.db = db
         self.api_key = api_key if api_key is not None else get_api_key()
 
@@ -114,7 +114,7 @@ class TiingoCacheClient:
     def configured(self) -> bool:
         return bool(self.api_key)
 
-    def usage(self) -> Dict[str, Any]:
+    def usage(self) -> dict[str, Any]:
         """Aktuální stav čítače (calls_used / daily_limit / remaining)."""
         u = self.db.get_api_usage(PROVIDER_NAME)
         if u.get("daily_limit") is None:
@@ -140,7 +140,7 @@ class TiingoCacheClient:
 
     # ------------------------------------------------------------------ dotazy
 
-    def _fetch(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    def _fetch(self, path: str, params: dict[str, Any] | None = None) -> Any:
         if not self.can_call():
             raise TiingoLimitExceeded(
                 f"Tiingo denní limit {_daily_limit()} volání vyčerpán — čtu pouze z DB."
@@ -151,7 +151,7 @@ class TiingoCacheClient:
         self._consume()  # volání se počítá až po úspěšném dotazu (429/5xx = zdarma)
         return data
 
-    def get_meta(self, ticker: str) -> Dict[str, Any]:
+    def get_meta(self, ticker: str) -> dict[str, Any]:
         """Metadata tickeru (name, exchange). Prázdný dict = neznámý symbol.
 
         Tiingo meta neobsahuje měnu — volající doplní výchozí hodnotu.
@@ -160,7 +160,7 @@ class TiingoCacheClient:
         data = self._fetch(f"daily/{ticker.strip().upper()}")
         if not isinstance(data, dict):  # list bary / jiná šmeřda → neznámý symbol
             return {}
-        out: Dict[str, Any] = {"name": data.get("name")}
+        out: dict[str, Any] = {"name": data.get("name")}
         exchange = data.get("exchangeCode") or data.get("exchange")
         if exchange:
             out["exchange"] = exchange
@@ -170,8 +170,8 @@ class TiingoCacheClient:
         return out
 
     def get_price_history(
-        self, ticker: str, start_date: Optional[str] = None, end_date: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, ticker: str, start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
         """Denní OHLCV bary (nejstarší první) z ``/daily/{T}/prices``.
 
         ``start_date``/``end_date`` jako ISO YYYY-MM-DD. Bez ``start_date`` se
@@ -182,14 +182,14 @@ class TiingoCacheClient:
         tk = ticker.strip().upper()
         if not start_date:
             start_date = (date.today() - timedelta(days=3650)).isoformat()
-        params: Dict[str, Any] = {"startDate": start_date}
+        params: dict[str, Any] = {"startDate": start_date}
         if end_date:
             params["endDate"] = end_date
         data = self._fetch(f"daily/{tk}/prices", params)
         bars = data if isinstance(data, list) else []
         return sorted(bars, key=lambda b: str(b.get("date", "")))
 
-    def get_dividend_history(self, ticker: str, start_date: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_dividend_history(self, ticker: str, start_date: str | None = None) -> list[dict[str, Any]]:
         """Dividendová historie odvozená z pole ``divCash`` v denních barech.
 
         Free plán Tiingo nemá samostatný dividendový endpoint (viz modulový
@@ -200,7 +200,7 @@ class TiingoCacheClient:
         beze změny; payment/record date a frekvence bývají ``None``.
         """
         bars = self.get_price_history(ticker, start_date=start_date)
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for bar in bars:
             amount = bar.get("divCash")
             if not isinstance(amount, (int, float)) or amount <= 0:

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .db import Database
 from .fmp import FMPCacheClient, FMPError, FMPLimitExceeded
@@ -32,7 +32,7 @@ FUNDAMENTAL_TTL = 72 * 3600
 DIVIDEND_TTL = 7 * 86400
 
 
-def _parse_date(value: Any) -> Optional[str]:
+def _parse_date(value: Any) -> str | None:
     """Normalizuje datum z providera (ISO string / epoch ms / datetime) na ISO ``YYYY-MM-DD``."""
     if value in (None, ""):
         return None
@@ -48,7 +48,7 @@ def _parse_date(value: Any) -> Optional[str]:
     return None
 
 
-def _to_amount(value: Any) -> Optional[float]:
+def _to_amount(value: Any) -> float | None:
     try:
         f = float(value)
     except (TypeError, ValueError):
@@ -58,9 +58,9 @@ def _to_amount(value: Any) -> Optional[float]:
     return round(f, 6)
 
 
-def _dividend_rows_from_fmp(ticker: str, hist: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _dividend_rows_from_fmp(ticker: str, hist: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalizuje FMP ``historical-dividend`` na řádky pro DB."""
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for item in hist:
         ex_date = _parse_date(item.get("date") or item.get("exDate"))
         amount = _to_amount(item.get("amount"))
@@ -79,10 +79,10 @@ def _dividend_rows_from_fmp(ticker: str, hist: List[Dict[str, Any]]) -> List[Dic
     return rows
 
 
-def _calendar_rows_from_fmp(ticker: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _calendar_rows_from_fmp(ticker: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalizuje FMP ``ex-dividend-date`` (budoucí výplaty) na řádky pro DB."""
     today = date.today().isoformat()
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for item in items:
         ex_date = _parse_date(item.get("exDividendDate") or item.get("date"))
         amount = _to_amount(item.get("amount"))
@@ -101,8 +101,8 @@ def _calendar_rows_from_fmp(ticker: str, items: List[Dict[str, Any]]) -> List[Di
 
 
 def _dividend_rows_from_tiingo(
-    ticker: str, items: List[Dict[str, Any]]
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    ticker: str, items: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Normalizuje Tiingo dividendový payload (exDate/distribution) na řádky pro DB.
 
     Zdroj je pole ``divCash`` v cenových barech (free plán nemá samostatný
@@ -113,8 +113,8 @@ def _dividend_rows_from_tiingo(
     from .tiingo import _FREQUENCY_MAP
 
     today = date.today().isoformat()
-    hist_rows: List[Dict[str, Any]] = []
-    cal_rows: List[Dict[str, Any]] = []
+    hist_rows: list[dict[str, Any]] = []
+    cal_rows: list[dict[str, Any]] = []
     for item in items:
         ex_date = _parse_date(item.get("exDate"))
         amount = _to_amount(item.get("distribution"))
@@ -210,7 +210,7 @@ def sync_via_yfinance(db: Database, ticker: str) -> None:
     except Exception as exc:  # noqa: BLE001 — bez historie pokračujeme jen s profilem
         log.warning("%s: dividendová historie nedostupná (%s)", tk, exc)
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     if div_series is not None and len(div_series):
         for ts, v in div_series.items():
             amount = _to_amount(v)
@@ -245,13 +245,13 @@ class DataFetchErrorFallback(RuntimeError):
     """Nedostatek dat z fallback zdroje (yfinance)."""
 
 
-def _is_fresh(ts: Optional[float], ttl: float, now: float) -> bool:
+def _is_fresh(ts: float | None, ttl: float, now: float) -> bool:
     return ts is not None and (now - ts) < ttl
 
 
 def _sync_one_ticker(
     fmp: FMPCacheClient, tiingo: TiingoCacheClient, db: Database, tk: str
-) -> Optional[str]:
+) -> str | None:
     """Provider chain pro jeden ticker: FMP → Tiingo → yfinance.
 
     Vrátí název provideru, který data dodal (``"fmp"`` / ``"tiingo"`` /
@@ -283,8 +283,8 @@ def _sync_one_ticker(
 
 
 def sync_fundamentals(
-    db: Database, tickers: List[str], force: bool = False
-) -> Dict[str, Any]:
+    db: Database, tickers: list[str], force: bool = False
+) -> dict[str, Any]:
     """Cache-first synchronizace fundamentů pro dávku tickerů.
 
     Vrátí souhrn::
@@ -295,7 +295,7 @@ def sync_fundamentals(
     now = time.time()
     fmp = FMPCacheClient(db)
     tiingo = TiingoCacheClient(db)
-    results: Dict[str, str] = {}
+    results: dict[str, str] = {}
 
     for tk in tickers:
         tk = tk.upper()
@@ -312,7 +312,7 @@ def sync_fundamentals(
         status = _sync_one_ticker(fmp, tiingo, db, tk)
         results[tk] = status if status is not None else ("stale_cache" if stock else "error")
 
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for status in results.values():
         counts[status] = counts.get(status, 0) + 1
     return {
@@ -323,7 +323,7 @@ def sync_fundamentals(
     }
 
 
-def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str, Any]:
+def sync_all(db: Database, tickers: list[str], force: bool = False) -> dict[str, Any]:
     """Kompletní synchronizace: fundamenty (cache-first) + aktuální ceny do ``quotes``.
 
     Všechny tickery se zároveň automaticky přidají do **trvalé watchlisty** a ta se
@@ -341,7 +341,7 @@ def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str,
 
     from .quotes import sync_quotes  # lokální import — quotes táhne yfinance
 
-    quote_stats: Dict[str, int] = {}
+    quote_stats: dict[str, int] = {}
     try:
         quote_stats = sync_quotes(db, tickers)
     except Exception as exc:  # noqa: BLE001 — ceny jsou doplňkové, nesmí zabít fundamenty
@@ -349,7 +349,7 @@ def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str,
 
     from .alerts import evaluate_alerts  # lokální import — kontrola proti cenám v DB
 
-    triggered: List[Dict[str, Any]] = []
+    triggered: list[dict[str, Any]] = []
     try:
         triggered = evaluate_alerts(db)
         for item in triggered:

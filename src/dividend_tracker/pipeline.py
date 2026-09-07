@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from .data.fetcher import build_snapshot, get_sector_benchmark
 from .domain.metrics import compute_metrics
@@ -27,7 +26,7 @@ def analyze_ticker(
     Zvedá :class:`DataFetchError`, pokud provider nevrátil dostatek dat.
     """
     snap: Snapshot = build_snapshot(ticker, refresh=refresh)
-    bench: Optional[Benchmark] = get_sector_benchmark(snap.sector) if use_benchmark else None
+    bench: Benchmark | None = get_sector_benchmark(snap.sector) if use_benchmark else None
     metrics: MetricsReport = compute_metrics(snap)
     score: ScoreResult = compute_score(snap, metrics, bench)
     fair_value = compute_fair_value(snap, metrics, required_return_pct)

@@ -49,10 +49,8 @@ select = [
     "F",     # pyflakes (nevyužité importy, nedefinované názvy)
     "I",     # isort (řazení importů)
     "B",     # flake8-bugbear (pravděpodobné bugy)
+    "UP",    # pyupgrade — moderní anotace (X | None, list/dict/tuple), hotovo 2026-09-07
 ]
-# Pozn.: "UP" (pyupgrade — Optional[X]→X|None, List→list) je záměrně VYPNUTO.
-# ~400 mechanických modernizací anotací dotkne každý soubor; provedeme jako
-# samostatný úklidový commit, aby nezakryl funkční změny.
 ignore = [
     "E501",  # délka řádku — formátování, ne linter
     "E402",  # import mimo začátek souboru — ZÁMĚRNÉ: .env se musí načíst PŘED

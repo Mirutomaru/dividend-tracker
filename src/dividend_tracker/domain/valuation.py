@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from ..models import FairValueResult, MetricsReport, Snapshot
 
 
@@ -12,8 +10,8 @@ def two_stage_ddm_price(
     g1_pct: float,
     r_pct: float,
     n_years: int = 5,
-    terminal_growth_pct: Optional[float] = None,
-) -> Optional[float]:
+    terminal_growth_pct: float | None = None,
+) -> float | None:
     """Two-stage dividend discount model.
 
     Fáze 1 (roky 1..``n_years``): dividenda ročně roste o ``g1_pct`` %.
@@ -65,7 +63,7 @@ def compute_fair_value(
       dividendový výnos: ``P = ForwardDPS / avg_yield_5y``.
     - Férová cena = průměr dostupných odhadů; nákupní zóna = [0.85·FV, FV] (15 % marže bezpečí).
     """
-    notes: List[str] = []
+    notes: list[str] = []
     r = required_return_pct / 100.0
 
     dps = snap.dps_ttm or 0.0
@@ -77,9 +75,9 @@ def compute_fair_value(
         )
 
     ddm_model = "gordon"
-    gordon_price: Optional[float] = None
-    two_stage_price: Optional[float] = None
-    growth_assumed_pct: Optional[float] = None
+    gordon_price: float | None = None
+    two_stage_price: float | None = None
+    growth_assumed_pct: float | None = None
 
     cagr5_raw = m.cagr_5y_pct  # číselná procenta, může být None
     if cagr5_raw is not None and cagr5_raw / 100.0 >= r:
@@ -117,7 +115,7 @@ def compute_fair_value(
             notes.append("Pozor: implikovaný výnos u Gordon FV > 25 % — model pravděpodobně nereálný.")
 
     # ---- Výnosová metoda ----------------------------------------------------------
-    yield_based_price: Optional[float] = None
+    yield_based_price: float | None = None
     avg_yield_pct = m.yield_5y_avg_pct
     if avg_yield_pct is None or avg_yield_pct <= 0:
         avg_yield_pct = m.yield_trailing_pct

@@ -13,7 +13,6 @@ import re
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List
 
 from ..data.fetcher import DataFetchError
 from ..pipeline import analyze_ticker
@@ -32,7 +31,7 @@ class DividendTrackerApp:
         root.geometry("1280x780")
         root.minsize(1000, 640)
 
-        self.reports: Dict[str, dict] = {}
+        self.reports: dict[str, dict] = {}
         self.q: queue.Queue = queue.Queue()
         self._busy = False
 
@@ -160,7 +159,7 @@ class DividendTrackerApp:
 
     # ------------------------------ analýza (vlákno + queue) -----------------------
 
-    def _start_analysis(self, tickers: List[str]) -> None:
+    def _start_analysis(self, tickers: list[str]) -> None:
         if self._busy:
             self._set_status("Analýza už běží — počkejte prosím.")
             return
@@ -169,7 +168,7 @@ class DividendTrackerApp:
             self._tree_set_row(tk_, {"score": "…", "safety": "…"}, status="Analyzuji…")
         threading.Thread(target=self._worker, args=(tickers,), daemon=True).start()
 
-    def _worker(self, tickers: List[str]) -> None:
+    def _worker(self, tickers: list[str]) -> None:
         for i, tk_ in enumerate(tickers, 1):
             self.q.put(("status", f"Analyzuji {tk_} ({i}/{len(tickers)}) …"))
             try:

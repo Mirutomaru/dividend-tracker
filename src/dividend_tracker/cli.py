@@ -8,7 +8,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 from .config import load_env as _load_env
 
@@ -24,7 +23,7 @@ from .presentation.report import export_json
 log = logging.getLogger(__name__)
 
 
-def _preprocess(argv: Optional[List[str]]) -> List[str]:
+def _preprocess(argv: list[str] | None) -> list[str]:
     """Umožní zkratku `divtrack AAPL KO` bez explicitního podpříkazu analyze."""
     if argv and argv[0] not in {"analyze", "gui", "web", "sync", "watch", "config", "portfolio", "alert", "export", "scan"} and not argv[0].startswith("-"):
         return ["analyze", *argv]
@@ -35,14 +34,14 @@ def _preprocess(argv: Optional[List[str]]) -> List[str]:
 _TICKER_RE = re.compile(r"[A-Z][A-Z0-9.\-]*")
 
 
-def _read_tickers_from_file(path: Path) -> List[str]:
+def _read_tickers_from_file(path: Path) -> list[str]:
     """Načte tickery ze souboru (jeden na řádek, `#` = komentář).
 
     Vrací normalizované (uppercase, bez mezer) unikátní tickery v pořadí
     prvního výskytu. Prázdné řádky a komentáře se ignorují.
     """
     seen: set[str] = set()
-    out: List[str] = []
+    out: list[str] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip().upper()
         if not line or line in seen:
@@ -53,7 +52,7 @@ def _read_tickers_from_file(path: Path) -> List[str]:
     return out
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="divtrack",
         description="Dividend Tracker — tracking, skórování a valuační analýza dividendových akcií.",

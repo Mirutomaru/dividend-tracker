@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from ..domain.portfolio_returns import (
     CashFlow,
@@ -41,12 +41,12 @@ from .watchlist import _build_series, _ttm
 log = logging.getLogger(__name__)
 
 
-def _shares_held_after(timeline: List[Tuple[str, float]], d_iso: str) -> float:
+def _shares_held_after(timeline: list[tuple[str, float]], d_iso: str) -> float:
     """Počet akcií držených na konci dne ``d_iso`` (po transakcích toho dne)."""
     return sum(delta for txn_date, delta in timeline if txn_date <= d_iso)
 
 
-def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
+def compute_portfolio_returns(db: Database) -> dict[str, Any]:
     """TWR a IRR portfolia z transakční historie (offline, bez sítě).
 
     Vstupní data:
@@ -64,8 +64,8 @@ def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
     today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Timeline podílu per ticker + externí cash flow (kladné = peníze do kapsy investora).
-    holdings: Dict[str, List[Tuple[str, float]]] = {}
-    flows: Dict[str, float] = {}
+    holdings: dict[str, list[tuple[str, float]]] = {}
+    flows: dict[str, float] = {}
     for t in txns:
         tk = t["ticker"]
         kind = t.get("kind")
@@ -98,8 +98,8 @@ def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
 
     # Ceny per ticker (celá historie — pro hodnocení v historických datech).
     positions = {p["ticker"]: p for p in db.list_positions()}
-    price_maps: Dict[str, Dict[str, float]] = {}
-    fallback_px: Dict[str, Optional[float]] = {}
+    price_maps: dict[str, dict[str, float]] = {}
+    fallback_px: dict[str, float | None] = {}
     for tk in holdings:
         hist = db.get_price_history(tk, days=36500)
         price_maps[tk] = {str(r["date"])[:10]: float(r["close"]) for r in hist if r.get("close")}
@@ -107,7 +107,7 @@ def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
         pos = positions.get(tk) or {}
         fallback_px[tk] = quote.get("current_price") or pos.get("avg_cost")
 
-    def value_on(d_iso: str) -> Optional[float]:
+    def value_on(d_iso: str) -> float | None:
         """Tržní hodnota portfolia na konci dne ``d_iso`` (po transakcích toho dne)."""
         total = 0.0
         any_priced = False
@@ -122,7 +122,7 @@ def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
             any_priced = True
         return round(total, 2) if (any_priced and total > 0) else None
 
-    value_series: List[Tuple[str, float]] = []
+    value_series: list[tuple[str, float]] = []
     for d_iso in event_dates:
         v = value_on(d_iso)
         if v is not None:
@@ -141,14 +141,14 @@ def compute_portfolio_returns(db: Database) -> Dict[str, Any]:
     return {"twr_pct": twr_pct, "irr_pct": irr_pct}
 
 
-def build_portfolio_report(db: Database) -> Dict[str, Any]:
+def build_portfolio_report(db: Database) -> dict[str, Any]:
     """Vrátí kompletní report portfolia (pozice + součty)."""
-    positions: List[Dict[str, Any]] = []
+    positions: list[dict[str, Any]] = []
     total_market_value = 0.0
     total_cost_basis = 0.0
     total_annual_income = 0.0
     total_net_annual_income = 0.0
-    income_by_currency: Dict[str, float] = {}
+    income_by_currency: dict[str, float] = {}
 
     # Přepsání sazeb z databáze (sazby lze kdykoli upravit bez kódu).
     overrides = {k: v for k, v in db.list_settings().items() if k.startswith("withholding_")}
@@ -177,12 +177,12 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
         net_raw = net_amount(annual_income, country, overrides) if annual_income > 0 else None
         net_annual_income = round(net_raw, 2) if net_raw is not None else 0.0
 
-        yield_on_cost: Optional[float] = None
+        yield_on_cost: float | None = None
         if avg_cost and avg_cost > 0 and dps_ttm > 0:
             yield_on_cost = round(dps_ttm / avg_cost * 100.0, 2)
 
-        unrealized_pl: Optional[float] = None
-        unrealized_pl_pct: Optional[float] = None
+        unrealized_pl: float | None = None
+        unrealized_pl_pct: float | None = None
         if market_value is not None and cost_basis is not None:
             unrealized_pl = round(market_value - cost_basis, 2)
             if cost_basis > 0:
@@ -216,15 +216,15 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
         total_net_annual_income += net_annual_income
         income_by_currency[currency] = round(income_by_currency.get(currency, 0.0) + annual_income, 2)
 
-    portfolio_yield_pct: Optional[float] = None
+    portfolio_yield_pct: float | None = None
     if total_market_value > 0 and total_annual_income > 0:
         portfolio_yield_pct = round(total_annual_income / total_market_value * 100.0, 2)
 
-    net_portfolio_yield_pct: Optional[float] = None
+    net_portfolio_yield_pct: float | None = None
     if total_market_value > 0 and total_net_annual_income > 0:
         net_portfolio_yield_pct = round(total_net_annual_income / total_market_value * 100.0, 2)
 
-    weighted_yield_on_cost_pct: Optional[float] = None
+    weighted_yield_on_cost_pct: float | None = None
     if total_cost_basis > 0 and total_annual_income > 0:
         weighted_yield_on_cost_pct = round(total_annual_income / total_cost_basis * 100.0, 2)
 
@@ -252,7 +252,7 @@ def build_portfolio_report(db: Database) -> Dict[str, Any]:
     }
 
 
-def build_income_target_report(db: Database) -> Dict[str, Any]:
+def build_income_target_report(db: Database) -> dict[str, Any]:
     """Kalkulačka cílového ročního příjmů (rentier plán).
 
     Čte nastavení ``income_target`` (roční příjem v měně portfolia) a volitelně
@@ -270,7 +270,7 @@ def build_income_target_report(db: Database) -> Dict[str, Any]:
         return {"configured": False}
 
     yield_raw = db.get_setting("target_yield_pct")
-    assumed_yield_pct: Optional[float] = None
+    assumed_yield_pct: float | None = None
     if yield_raw:
         try:
             assumed_yield_pct = float(yield_raw)
@@ -285,8 +285,8 @@ def build_income_target_report(db: Database) -> Dict[str, Any]:
     # jinak nastavený/odhadovaný.
     effective_yield_pct = portfolio_yield if (portfolio_yield and portfolio_yield > 0) else assumed_yield_pct or 4.0
 
-    required_capital: Optional[float] = round(target / (effective_yield_pct / 100.0), 2) if target > 0 else None
-    progress_pct: Optional[float] = (
+    required_capital: float | None = round(target / (effective_yield_pct / 100.0), 2) if target > 0 else None
+    progress_pct: float | None = (
         round(current_income / target * 100.0, 1) if target > 0 else None
     )
     remaining_income = round(target - current_income, 2)

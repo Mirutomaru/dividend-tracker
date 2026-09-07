@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import Dict, List, Optional
 
 from .db import Database
 from .tiingo import TiingoCacheClient, TiingoError, recent_window
@@ -26,10 +25,10 @@ from .tiingo import TiingoCacheClient, TiingoError, recent_window
 log = logging.getLogger(__name__)
 
 
-def _quotes_from_tiingo(client: TiingoCacheClient, tickers: List[str]) -> Dict[str, Dict[str, Optional[float]]]:
+def _quotes_from_tiingo(client: TiingoCacheClient, tickers: list[str]) -> dict[str, dict[str, float | None]]:
     """Aktuální ceny z posledních ~10 dní (1 volání na ticker)."""
     start, end = recent_window(days=10)
-    out: Dict[str, Dict[str, Optional[float]]] = {}
+    out: dict[str, dict[str, float | None]] = {}
     for tk in tickers:
         try:
             bars = client.get_price_history(tk.strip().upper(), start_date=start, end_date=end)
@@ -47,7 +46,7 @@ def _quotes_from_tiingo(client: TiingoCacheClient, tickers: List[str]) -> Dict[s
     return out
 
 
-def _history_from_tiingo(client: TiingoCacheClient, tickers: List[str], days: int) -> Dict[str, List[tuple]]:
+def _history_from_tiingo(client: TiingoCacheClient, tickers: list[str], days: int) -> dict[str, list[tuple]]:
     """Denní uzavírací ceny za posledních ``days`` dní (1 volání na ticker).
 
     Používá ``adjClose`` (upraveno o dividenda/splity), aby odpovídalo
@@ -55,7 +54,7 @@ def _history_from_tiingo(client: TiingoCacheClient, tickers: List[str], days: in
     """
     end = date.today()
     start = end - timedelta(days=days)
-    out: Dict[str, List[tuple]] = {}
+    out: dict[str, list[tuple]] = {}
     for tk in tickers:
         try:
             bars = client.get_price_history(
@@ -64,7 +63,7 @@ def _history_from_tiingo(client: TiingoCacheClient, tickers: List[str], days: in
         except TiingoError as exc:
             log.warning("Tiingo historie pro %s nedostupná (%s), zkusím yfinance", tk, exc)
             continue
-        points: List[tuple] = []
+        points: list[tuple] = []
         for b in bars:
             d = str(b.get("date", ""))[:10]
             adj = b.get("adjClose")
@@ -78,8 +77,8 @@ def _history_from_tiingo(client: TiingoCacheClient, tickers: List[str], days: in
 
 
 def fetch_quotes(
-    tickers: List[str], db: Optional[Database] = None
-) -> Dict[str, Dict[str, Optional[float]]]:
+    tickers: list[str], db: Database | None = None
+) -> dict[str, dict[str, float | None]]:
     """Stáhne aktuální ceny pro dávku tickerů.
 
     Vrátí ``{ticker: {"price": float|None, "change": float|None, "volume": int|None}}``.
@@ -87,7 +86,7 @@ def fetch_quotes(
     tickery doplní yfinance (batch + fast_info). Chyba u jednoho tickera
     nezahodí celou dávku — chybějící se prostě nevrátí.
     """
-    out: Dict[str, Dict[str, Optional[float]]] = {}
+    out: dict[str, dict[str, float | None]] = {}
     if not tickers:
         return out
 
@@ -101,11 +100,11 @@ def fetch_quotes(
     return out
 
 
-def _fetch_quotes_yfinance(tickers: List[str]) -> Dict[str, Dict[str, Optional[float]]]:
+def _fetch_quotes_yfinance(tickers: list[str]) -> dict[str, dict[str, float | None]]:
     """Původní cesta přes yfinance (batch download + fast_info fallback)."""
     import yfinance as yf
 
-    out: Dict[str, Dict[str, Optional[float]]] = {}
+    out: dict[str, dict[str, float | None]] = {}
     if not tickers:
         return out
 
@@ -152,7 +151,7 @@ def _fetch_quotes_yfinance(tickers: List[str]) -> Dict[str, Dict[str, Optional[f
     return out
 
 
-def sync_quotes(db: Database, tickers: List[str]) -> Dict[str, int]:
+def sync_quotes(db: Database, tickers: list[str]) -> dict[str, int]:
     """Aktualizuje tabulku ``quotes`` a zároveň zapíše **denní snapshot** do ``price_history``.
 
     Snapshot je idempotentní (ON CONFLICT na ticker+date) — opakovaný sync ve stejný
@@ -175,15 +174,15 @@ def sync_quotes(db: Database, tickers: List[str]) -> Dict[str, int]:
 
 
 def fetch_price_history(
-    tickers: List[str], days: int = 365, db: Optional[Database] = None
-) -> Dict[str, List[tuple]]:
+    tickers: list[str], days: int = 365, db: Database | None = None
+) -> dict[str, list[tuple]]:
     """Stáhne denní uzavírací ceny za posledních ``days`` dní.
 
     Vrátí ``{ticker: [(date_iso, close), ...]}`` — nejstarší první. S ``db`` a
     nakonfigurovaným Tiingo jde primárně přes Tiingo (1 volání na ticker);
     chybějící tickery doplní yfinance batch. Chyba u jednoho nezahodí dávku.
     """
-    out: Dict[str, List[tuple]] = {}
+    out: dict[str, list[tuple]] = {}
     if not tickers:
         return out
 
@@ -197,11 +196,11 @@ def fetch_price_history(
     return out
 
 
-def _fetch_price_history_yfinance(tickers: List[str], days: int) -> Dict[str, List[tuple]]:
+def _fetch_price_history_yfinance(tickers: list[str], days: int) -> dict[str, list[tuple]]:
     """Původní cesta přes yfinance (batch download + jednotlivý fallback)."""
     import yfinance as yf
 
-    out: Dict[str, List[tuple]] = {}
+    out: dict[str, list[tuple]] = {}
     if not tickers:
         return out
 
@@ -240,7 +239,7 @@ def _fetch_price_history_yfinance(tickers: List[str], days: int) -> Dict[str, Li
     return out
 
 
-def backfill_price_history(db: Database, tickers: List[str], days: int = 365) -> Dict[str, int]:
+def backfill_price_history(db: Database, tickers: list[str], days: int = 365) -> dict[str, int]:
     """Doplní historii cen do ``price_history`` (pro 52tídní statistiky).
 
     Používá se při prvním spuštění / po dlouhé pauze — bez backfillu by percentil

@@ -7,7 +7,7 @@ Konvence jednotek:
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,51 +20,51 @@ class Snapshot(BaseModel):
     """
 
     ticker: str
-    name: Optional[str] = None
-    sector: Optional[str] = None
-    industry: Optional[str] = None
+    name: str | None = None
+    sector: str | None = None
+    industry: str | None = None
     currency: str = "USD"
-    as_of: Optional[str] = None  # ISO timestamp sběru dat
+    as_of: str | None = None  # ISO timestamp sběru dat
 
-    price: Optional[float] = None
-    shares_outstanding: Optional[int] = None
-    market_cap: Optional[float] = None
-    enterprise_value: Optional[float] = None
+    price: float | None = None
+    shares_outstanding: int | None = None
+    market_cap: float | None = None
+    enterprise_value: float | None = None
 
     # Dividendy (za fiskální rok; fiskální rok ≈ kalendářní rok, viz domain/dividends.py)
-    annual_dps: Dict[int, float] = Field(default_factory=dict)
-    dividend_payment_counts: Dict[int, int] = Field(default_factory=dict)
-    dps_ttm: Optional[float] = None  # dividenda na akcii TTM (posledních 365 dnů od poslední výplaty)
-    forward_dividend_rate: Optional[float] = None  # očekávaná roční DPS (forward)
+    annual_dps: dict[int, float] = Field(default_factory=dict)
+    dividend_payment_counts: dict[int, int] = Field(default_factory=dict)
+    dps_ttm: float | None = None  # dividenda na akcii TTM (posledních 365 dnů od poslední výplaty)
+    forward_dividend_rate: float | None = None  # očekávaná roční DPS (forward)
 
     # Výsledek / vstupy valuace (nejnovější fiskální rok nebo TTM, dle providera)
-    eps_ttm: Optional[float] = None
-    eps_forward: Optional[float] = None
-    ebitda: Optional[float] = None
-    ebit: Optional[float] = None
-    interest_expense: Optional[float] = None
-    net_income: Optional[float] = None
-    tax_rate: Optional[float] = None  # 0.25 == 25 %
+    eps_ttm: float | None = None
+    eps_forward: float | None = None
+    ebitda: float | None = None
+    ebit: float | None = None
+    interest_expense: float | None = None
+    net_income: float | None = None
+    tax_rate: float | None = None  # 0.25 == 25 %
 
     # Bilance / cash flow (nejnovější fiskální rok)
-    total_debt: Optional[float] = None
-    cash_and_equivalents: Optional[float] = None
-    equity: Optional[float] = None
-    fcf_ttm: Optional[float] = None  # volný hotovostní tok (roční, nejnovější k dispozici)
-    dividends_paid: Optional[float] = None  # reálně vyplacené dividendy z CF výkazu
-    depreciation_amortization: Optional[float] = None  # D&A z CF výkazu (pro FFO/AFFO u REIT)
-    capex: Optional[float] = None  # kapitálové výdaje, kladná velikost |CapEx| (AFFO odhad)
+    total_debt: float | None = None
+    cash_and_equivalents: float | None = None
+    equity: float | None = None
+    fcf_ttm: float | None = None  # volný hotovostní tok (roční, nejnovější k dispozici)
+    dividends_paid: float | None = None  # reálně vyplacené dividendy z CF výkazu
+    depreciation_amortization: float | None = None  # D&A z CF výkazu (pro FFO/AFFO u REIT)
+    capex: float | None = None  # kapitálové výdaje, kladná velikost |CapEx| (AFFO odhad)
 
     # Násobky hlášené direktně providerem (fallback / cross-check)
-    pe_ttm_reported: Optional[float] = None
-    pe_forward_reported: Optional[float] = None
-    ev_ebitda_reported: Optional[float] = None
+    pe_ttm_reported: float | None = None
+    pe_forward_reported: float | None = None
+    ev_ebitda_reported: float | None = None
 
     # Historie pro kontext yieldu a P/E (fiskální rok -> hodnota)
-    fiscal_year_prices: Dict[int, float] = Field(default_factory=dict)  # závěrečná cena za rok
-    pe_history_approx: Dict[int, float] = Field(default_factory=dict)   # P/E aprox. (konstantní EPS_TTM!)
+    fiscal_year_prices: dict[int, float] = Field(default_factory=dict)  # závěrečná cena za rok
+    pe_history_approx: dict[int, float] = Field(default_factory=dict)   # P/E aprox. (konstantní EPS_TTM!)
 
-    data_gaps: List[str] = Field(default_factory=list)
+    data_gaps: list[str] = Field(default_factory=list)
 
 
 SafetyFlag = Literal["green", "yellow", "red"]
@@ -77,54 +77,54 @@ class MetricsReport(BaseModel):
     ticker: str
 
     # A. Dividendové metriky & udržitelnost
-    yield_trailing_pct: Optional[float] = None
-    yield_forward_pct: Optional[float] = None
-    payout_eps_pct: Optional[float] = None        # DPS_TTM / EPS_TTM (u REIT ignorováno)
-    fcf_payout_pct: Optional[float] = None        # Dividends Paid / FCF
-    ffo_payout_pct: Optional[float] = None        # REIT: Dividends Paid / FFO (FFO ≈ NI + D&A)
-    affo_payout_pct: Optional[float] = None       # REIT: Dividends Paid / AFFO (AFFO ≈ FFO − CapEx, odhad)
-    cagr_3y_pct: Optional[float] = None
-    cagr_5y_pct: Optional[float] = None
-    cagr_10y_pct: Optional[float] = None
+    yield_trailing_pct: float | None = None
+    yield_forward_pct: float | None = None
+    payout_eps_pct: float | None = None        # DPS_TTM / EPS_TTM (u REIT ignorováno)
+    fcf_payout_pct: float | None = None        # Dividends Paid / FCF
+    ffo_payout_pct: float | None = None        # REIT: Dividends Paid / FFO (FFO ≈ NI + D&A)
+    affo_payout_pct: float | None = None       # REIT: Dividends Paid / AFFO (AFFO ≈ FFO − CapEx, odhad)
+    cagr_3y_pct: float | None = None
+    cagr_5y_pct: float | None = None
+    cagr_10y_pct: float | None = None
     streak_years: int = 0  # po sobě jdoucí roky růstu výplaty
 
     # B. Ocenění & valuace
-    pe_ttm: Optional[float] = None
-    pe_forward: Optional[float] = None
-    p_b: Optional[float] = None                  # cena / účetní hodnota na akcii (equity ÷ shares)
-    graham_number: Optional[float] = None        # √(22,5 × EPS_TTM × BVPS) — Benjaminoва férová cena
-    lynch_peg: Optional[float] = None            # P/E ÷ růst % (růst = 5letý CAGR dividendy jako proxy)
-    p_fcf: Optional[float] = None
-    ev_ebitda: Optional[float] = None
-    fcf_yield_pct: Optional[float] = None         # FCF per share / cena
-    yield_5y_avg_pct: Optional[float] = None      # průměr ročních dividendových výnosů (max. 5 let)
-    yield_vs_5y_deviation_pct: Optional[float] = None  # (aktuální/avg - 1) v %
+    pe_ttm: float | None = None
+    pe_forward: float | None = None
+    p_b: float | None = None                  # cena / účetní hodnota na akcii (equity ÷ shares)
+    graham_number: float | None = None        # √(22,5 × EPS_TTM × BVPS) — Benjaminoва férová cena
+    lynch_peg: float | None = None            # P/E ÷ růst % (růst = 5letý CAGR dividendy jako proxy)
+    p_fcf: float | None = None
+    ev_ebitda: float | None = None
+    fcf_yield_pct: float | None = None         # FCF per share / cena
+    yield_5y_avg_pct: float | None = None      # průměr ročních dividendových výnosů (max. 5 let)
+    yield_vs_5y_deviation_pct: float | None = None  # (aktuální/avg - 1) v %
 
     # C. Finanční zdraví & solvence
-    net_debt_to_ebitda: Optional[float] = None
-    interest_coverage: Optional[float] = None
-    roic_pct: Optional[float] = None
+    net_debt_to_ebitda: float | None = None
+    interest_coverage: float | None = None
+    roic_pct: float | None = None
 
-    notes: List[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class ScoreBreakdown(BaseModel):
     """Skóre bloků 0–100 (bloková váha je součást celkového vzorce)."""
 
-    sustainability_pct: Optional[float] = None  # váha 40
-    valuation_pct: Optional[float] = None       # váha 35
-    quality_growth_pct: Optional[float] = None  # váha 25
+    sustainability_pct: float | None = None  # váha 40
+    valuation_pct: float | None = None       # váha 35
+    quality_growth_pct: float | None = None  # váha 25
 
 
 class ScoreResult(BaseModel):
     """Celkové skóre + bezpečnostní flag + signály."""
 
     applicable: bool = True
-    total: Optional[float] = None  # 0–100; None, pokud firma nevyplácí dividendu
-    safety_flag: Optional[SafetyFlag] = None
-    signals: List[str] = Field(default_factory=list)  # strojově čitelné kódy, viz scoring.SIGNALS
+    total: float | None = None  # 0–100; None, pokud firma nevyplácí dividendu
+    safety_flag: SafetyFlag | None = None
+    signals: list[str] = Field(default_factory=list)  # strojově čitelné kódy, viz scoring.SIGNALS
     breakdown: ScoreBreakdown = Field(default_factory=ScoreBreakdown)
-    reasons: List[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
 
 
 DdmModel = Literal["gordon", "two_stage"]
@@ -134,22 +134,22 @@ class FairValueResult(BaseModel):
     """Férová cena a doporučená nákupní zóna."""
 
     required_return_pct: float = 8.0
-    growth_assumed_pct: Optional[float] = None
+    growth_assumed_pct: float | None = None
     ddm_model: DdmModel = "gordon"   # použitý dividendový diskontní model
-    gordon_price: Optional[float] = None       # single-stage (P = D1/(r−g))
-    two_stage_price: Optional[float] = None    # two-stage DDM (vysoký krátkodobý růst, g > r)
-    yield_based_price: Optional[float] = None
-    fair_value: Optional[float] = None
-    buy_zone_low: Optional[float] = None   # konzervativní kraj (15 % marže bezpečí pod FV)
-    buy_zone_high: Optional[float] = None  # optimistická kraj == férová cena
+    gordon_price: float | None = None       # single-stage (P = D1/(r−g))
+    two_stage_price: float | None = None    # two-stage DDM (vysoký krátkodobý růst, g > r)
+    yield_based_price: float | None = None
+    fair_value: float | None = None
+    buy_zone_low: float | None = None   # konzervativní kraj (15 % marže bezpečí pod FV)
+    buy_zone_high: float | None = None  # optimistická kraj == férová cena
     verdict: Verdict = "unknown"           # porovnání aktuální ceny s FV (pásmo ±10 %)
-    notes: List[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class Benchmark(BaseModel):
     """Odvětvový benchmark z peer universe (mediány)."""
 
     sector: str
-    median_pe_ttm: Optional[float] = None
-    median_ev_ebitda: Optional[float] = None
+    median_pe_ttm: float | None = None
+    median_ev_ebitda: float | None = None
     n_peers: int = 0

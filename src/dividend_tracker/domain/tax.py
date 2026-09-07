@@ -12,13 +12,13 @@ Vše běží offline — žádné externí volání, jen země z lokální DB + 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 log = logging.getLogger(__name__)
 
 #: Smluvní sazby zadržovací daně pro rezidenta ČR (odhad, %).
 #: Země v tabulce se normalizují na uppercase ISO-2 kód.
-WITHHOLDING_RATES: Dict[str, float] = {
+WITHHOLDING_RATES: dict[str, float] = {
     "US": 15.0,   # US–CZ/EU smlouva (W-8BEN)
     "CA": 15.0,   # CZ–Kanada
     "GB": 0.0,    # UK od 2016 neuplatňuje zadržovací daň na dividendy
@@ -29,7 +29,7 @@ WITHHOLDING_RATES: Dict[str, float] = {
 }
 
 
-def _normalize_country(country: Optional[str]) -> Optional[str]:
+def _normalize_country(country: str | None) -> str | None:
     """Normalizuje zemi na uppercase ISO-2 kód (``"United States" → "US"``)."""
     if not country:
         return None
@@ -50,9 +50,9 @@ def _normalize_country(country: Optional[str]) -> Optional[str]:
 
 
 def withholding_rate(
-    country: Optional[str],
-    overrides: Optional[Dict[str, Any]] = None,
-) -> Optional[float]:
+    country: str | None,
+    overrides: dict[str, Any] | None = None,
+) -> float | None:
     """Vrátí sazbu zadržovací daně (%) pro danou zemi.
 
     Priorita: přepsání v nastavení DB (``withholding_<ZEME>``) > vestavěná
@@ -75,10 +75,10 @@ def withholding_rate(
 
 
 def net_yield_pct(
-    gross_yield_pct: Optional[float],
-    country: Optional[str],
-    overrides: Optional[Dict[str, Any]] = None,
-) -> Optional[float]:
+    gross_yield_pct: float | None,
+    country: str | None,
+    overrides: dict[str, Any] | None = None,
+) -> float | None:
     """Čistý (net) yield po zdanění.
 
     ``None`` vstoupí → ``None`` ven (yield se nedá spočítat). Neznámá sazba
@@ -94,10 +94,10 @@ def net_yield_pct(
 
 
 def net_amount(
-    gross_amount: Optional[float],
-    country: Optional[str],
-    overrides: Optional[Dict[str, Any]] = None,
-) -> Optional[float]:
+    gross_amount: float | None,
+    country: str | None,
+    overrides: dict[str, Any] | None = None,
+) -> float | None:
     """Čistá částka po zdanění (např. roční příjem pozice)."""
     if gross_amount is None:
         return None

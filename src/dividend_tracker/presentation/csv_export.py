@@ -14,10 +14,10 @@ from __future__ import annotations
 import csv
 import io
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any
 
 # Sloupce watchlist CSV — pořadí = sloupce ve souboru.
-WATCHLIST_COLUMNS: List[str] = [
+WATCHLIST_COLUMNS: list[str] = [
     "ticker", "name", "currency", "exchange", "country", "sector",
     "price", "change", "volume",
     "dps_ttm", "yield_pct", "net_yield_pct", "payout_pct",
@@ -27,7 +27,7 @@ WATCHLIST_COLUMNS: List[str] = [
 ]
 
 # Sloupce analytického CSV — (názov, cesta do reportu).
-ANALYSIS_COLUMNS: List[tuple[str, tuple[str, ...]]] = [
+ANALYSIS_COLUMNS: list[tuple[str, tuple[str, ...]]] = [
     ("ticker", ("ticker",)),
     ("name", ("company", "name")),
     ("sector", ("company", "sector")),
@@ -51,7 +51,7 @@ ANALYSIS_COLUMNS: List[tuple[str, tuple[str, ...]]] = [
 ]
 
 
-def _dig(report: Dict[str, Any], path: tuple[str, ...]) -> Any:
+def _dig(report: dict[str, Any], path: tuple[str, ...]) -> Any:
     """Vydoluje hodnotu podle cesty; chybějící úroveň → ``None``."""
     cur: Any = report
     for key in path:
@@ -75,7 +75,7 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
-def _csv_text(header: List[str], rows: List[List[Any]]) -> str:
+def _csv_text(header: list[str], rows: list[list[Any]]) -> str:
     """CSV jako text (pro web endpoint — bez souboru na disku)."""
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
@@ -84,13 +84,13 @@ def _csv_text(header: List[str], rows: List[List[Any]]) -> str:
     return buf.getvalue()
 
 
-def watchlist_csv_text(rows: List[Dict[str, Any]]) -> str:
+def watchlist_csv_text(rows: list[dict[str, Any]]) -> str:
     """Watchlist řádky jako CSV text."""
     data = [[_fmt(row.get(col)) for col in WATCHLIST_COLUMNS] for row in rows]
     return _csv_text(WATCHLIST_COLUMNS, data)
 
 
-def analysis_csv_text(reports: List[Dict[str, Any]]) -> str:
+def analysis_csv_text(reports: list[dict[str, Any]]) -> str:
     """Analytické reporty jako CSV text (vybrané metriky)."""
     header = [name for name, _ in ANALYSIS_COLUMNS]
     data = [[_fmt(_dig(rep, path_)) for _, path_ in ANALYSIS_COLUMNS] for rep in reports]
@@ -98,7 +98,7 @@ def analysis_csv_text(reports: List[Dict[str, Any]]) -> str:
 
 
 def export_watchlist_csv(
-    rows: List[Dict[str, Any]], path: Union[str, Path]
+    rows: list[dict[str, Any]], path: str | Path
 ) -> Path:
     """Exportuje watchlist řádky do CSV. Vrátí absolutní cestu."""
     p = Path(path).expanduser().resolve()
@@ -108,7 +108,7 @@ def export_watchlist_csv(
 
 
 def export_analysis_csv(
-    reports: List[Dict[str, Any]], path: Union[str, Path]
+    reports: list[dict[str, Any]], path: str | Path
 ) -> Path:
     """Exportuje analytické reporty do CSV (vybrané metriky). Vrátí cestu."""
     p = Path(path).expanduser().resolve()
