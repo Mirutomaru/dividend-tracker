@@ -112,9 +112,9 @@ src/dividend_tracker/
 
 ### Stav ověření (poslední kontrola)
 ```bash
-.venv/bin/python -m pytest        # → 293 passed
+.venv/bin/python -m pytest        # → 312 passed
 .venv/bin/ruff check src tests    # → All checks passed!
-.venv/bin/mypy                    # → Success: no issues found in 34 source files
+.venv/bin/mypy                    # → Success: no issues found in 35 source files
 git status                        # → clean (main)
 ```
 
@@ -161,6 +161,16 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-07 — Tiingo jako druhý data provider (ceny primárně, dividendy v chainu)
+- **Motivace**: Yahoo Finance má přísné limity synchronizace; Tiingo nabízí 10 000 volání/den.
+- **Nový modul** `data/tiingo.py` — klient s Bearer auth (`TIINGO_API_KEY`), denní čítač v `api_usage` (limit přepisovatelný `TIINGO_DAILY_LIMIT`), endpointy: daily OHLCV, corporate-actions/dividends, meta tickeru. Čistý urllib, žádné nové závislosti.
+- **Provider chain** v `sync.py`: fundamenty + dividendy jdou **FMP → Tiingo → yfinance**; každý provider jen pokud je nakonfigurovaný a má limit; při chybě/limitu pokračuje řetězec dál. `sync_via_tiingo` = 1 volání na ticker (dividendy), meta jen při prvním syncu tickera.
+- **Ceny** (`quotes.py`): primárně Tiingo (aktuální cena z posledních 10 dní, historie s `adjClose`), fallback yfinance pro chybějící tickery; bez klíče se chová jako dříve (čistý yfinance batch).
+- **CLI**: `divtrack config set TIINGO_API_KEY=...`, výstup sync tiskne i „Tiingo: X/10000 volání dnes“.
+- **Web GUI**: nový status bar Tiingo (`GET /api/tiingo-status`) vedle FMP; po syncu se oba limity obnoví.
+- **Testy**: +18 offline testů v `tests/test_tiingo.py` (klient, limit/429/401, normalizace dividend s rozdělením historie/kalendář, chain FMP→Tiingo→yfinance, ceny a backfill přes Tiingo). Celkem **312 passed**, ruff clean, mypy clean.
+- **Dokumentace**: NAVOD.md (config), README.md (provider chain + konfigurace).
 
 ### 2026-09-07 — oprava nočního syncu + restart web serveru na aktuální kód
 - **Diagnóza**: Hermes cron job `divtrack-nightly-sync` selhával 4× po sobě (od 04. 9.) chybou „Script not found: ~/.hermes/profiles/developer/scripts/divtrack_nightly_sync.sh“ — skript ležel v `~/.hermes/scripts/` (default profil), ale job se řeší relativně vůči profilemu adresáři. Druhá chyba: `divtrack sync` bez argů čte jen tabulku `stocks`; JNJ/KO jsou jen v trvalé watchlistě → „Databáze je prázdná“ (exit 2). Třetí: web server běžel od 09:59 s kódem starším než commity z 11:18/13:03 (`/api/history` a `/api/scan` vracely 404).

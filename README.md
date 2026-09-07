@@ -179,17 +179,24 @@ přesahuje restarty) bez jakéhokoli externího volání:
   - *FMP* (fundamenty + dividendy, dávka 1–3 volání na ticker) s denním limitem
     **250 volání** — čítač a expirace se evidují v tabulce `api_usage`; při vyčerpání
     limitu se fundamenty přestávají tahat a čte se jen z DB.
-  - *Ceny* nikdy neprocházejí FMP: aktuální ceny jde **yfinance** (bez tvrdého
-    denního limitu) do tabulky `quotes`.
+  - *Ceny* nikdy neprocházejí FMP: aktuální ceny jde **Tiingo** (primárně,
+    limit 10 000 volání/den) s fallbackem na yfinance do tabulky `quotes`.
 - **API**: `GET /api/watchlist` · `POST /api/sync {tickers, force}` ·
-  `GET /api/fmp-status` (zbývající volání dnes).
+  `GET /api/fmp-status` (zbývající volání dnes) · `GET /api/tiingo-status`.
 
-### Konfigurace FMP
+### Konfigurace FMP a Tiingo
 
 ```bash
-export FMP_API_KEY="..."        # bez klíče běží sync jen přes yfinance fallback
+export FMP_API_KEY="..."        # fundamenty: první v řetězci providerů
+export TIINGO_API_KEY="..."     # ceny + historie cen (primárně), dividendy (2. v řetězci)
+# bez klíčů běží sync jen přes yfinance fallback
 # volitelné: DIVTRACK_DB=/cesta/k/data.db   (výchozí ~/.cache/dividend-tracker/data.db)
 ```
+
+Provider chain pro fundamenty a dividendy: **FMP → Tiingo → yfinance** — každý
+provider se používá jen pokud je nakonfigurovaný a má zbývající denní limit;
+při vyčerpání / chybě pokračuje řetězec dál. Aktuální ceny a historie cen:
+**Tiingo → yfinance**.
 
 Datové schéma (minimální, dle zadání): `stocks` (ticker, name, currency, exchange,
 last_fundamental_update), `dividends_history` (ex_date, payment_date, record_date,

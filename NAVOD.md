@@ -180,17 +180,20 @@ divtrack export watchlist --file mój.csv  # vlastní výstupní cesta
 
 ### `config` — konfigurace (.env)
 
-Spravuje proměnné v `.env`. Povolené klíče: `FMP_API_KEY`, `DIVTRACK_DB`,
-`DIVTRACK_WATCHLIST`.
+Spravuje proměnné v `.env`. Povolené klíče: `FMP_API_KEY`, `TIINGO_API_KEY`,
+`DIVTRACK_DB`, `DIVTRACK_WATCHLIST`.
 
 ```bash
 divtrack config show                          # zobrazit aktuální konfiguraci
 divtrack config set FMP_API_KEY=xxxx          # nastavit API klíč (pro fundamenta)
+divtrack config set TIINGO_API_KEY=xxxx       # nastavit Tiingo klíč (ceny + dividendy, limit 10 000/den)
 divtrack config unset FMP_API_KEY             # odebrat
 ```
 
 Bez `FMP_API_KEY` běží aplikace plně na yfinance — fundamenty se stahují pomaleji,
-ale funkční. Klíč je volitelný.
+ale funkční. Klíč je volitelný. S `TIINGO_API_KEY` jde primárně přes Tiingo
+(ceny a historie cen + dividendová historie), FMP zůstává první v řetězci pro
+fundamenta; yfinance je poslední záloha.
 
 ---
 

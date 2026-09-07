@@ -29,6 +29,9 @@ const scanCount = $("#scan-count");
 const fmpBar = $("#fmp-bar");
 const fmpStatusText = $("#fmp-status-text");
 const refreshFmpBtn = $("#refresh-fmp-btn");
+const tiingoBar = $("#tiingo-bar");
+const tiingoStatusText = $("#tiingo-status-text");
+const refreshTiingoBtn = $("#refresh-tiingo-btn");
 const pfSection = $("#portfolio-section");
 const pfBody = $("#portfolio-body");
 const pfCount = $("#portfolio-count");
@@ -712,13 +715,35 @@ async function loadFmpStatus() {
   }
 }
 
+/* ------------------------------ Tiingo status ------------------------------ */
+
+async function loadTiingoStatus() {
+  try {
+    const res = await fetch("/api/tiingo-status");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const s = await res.json();
+    tiingoBar.classList.remove("hidden");
+    if (!s.configured) {
+      tiingoStatusText.textContent = "Tiingo: API klíč nenastaven (proměnná TIINGO_API_KEY) — ceny a historie se stahují přes yfinance.";
+      return;
+    }
+    const limit = s.daily_limit ?? 10000;
+    const used = s.calls_used ?? 0;
+    const remaining = Math.max(0, (s.remaining != null ? s.remaining : limit - used));
+    tiingoStatusText.textContent = `Tiingo: ${used}/${limit} volání dnes · zbývá ${remaining}` +
+      (remaining <= 100 ? " ⚠️ limit se blíží — ceny se už netaží z Tiingo, čtu z DB/yfinance" : "");
+  } catch {
+    tiingoBar.classList.add("hidden");
+  }
+}
+
 /* ------------------------------ synchronizace dat ------------------------------ */
 
 async function startSync(tickers) {
   setBusy(true);
   progressEl.classList.remove("hidden");
   progressTitle.textContent = `Synchronizuji data pro ${tickers.length} ticker(ů)…`;
-  progressSub.textContent = "Cache-first: čerstvá data z lokální DB, stará se stahují (FMP limit 250/den).";
+  progressSub.textContent = "Cache-first: čerstvá data z lokální DB, stará se stahují (FMP → Tiingo → yfinance).";
 
   try {
     const res = await fetch("/api/sync", {
@@ -764,7 +789,7 @@ function pollSyncJob(jobId, total) {
           `• stará data ponechána: ${c.stale_cache ?? 0} · chyby: ${c.error ?? 0}\n` +
           `• ceny aktualizovány: ${q.updated ?? 0}/${total}`
         );
-        await Promise.all([loadWatchlist(), loadFmpStatus()]);
+        await Promise.all([loadWatchlist(), loadFmpStatus(), loadTiingoStatus()]);
       }
     } catch {
       /* dočasná chyba sítě — zkusit znovu při dalším ticku */
@@ -1417,6 +1442,7 @@ tableBody.addEventListener("click", (e) => {
 });
 
 refreshFmpBtn.addEventListener("click", loadFmpStatus);
+refreshTiingoBtn.addEventListener("click", loadTiingoStatus);
 
 // Přidání upozornění (formulář).
 alertForm.addEventListener("submit", submitAlert);
@@ -1453,11 +1479,12 @@ resultsEl.addEventListener("click", (e) => {
   removeStoredReport(btnEl.dataset.ticker);
 });
 
-// Start: načíst watchlist z DB + portfolio + upozornění + stav FMP limitu.
+// Start: načíst watchlist z DB + portfolio + upozornění + stav limitů (FMP, Tiingo).
 loadWatchlist();
 loadPortfolio();
 loadAlerts();
 loadFmpStatus();
+loadTiingoStatus();
 observeChartCards(); // lazy-load grafů pro všechny karty (analýza, scan, uložené reporty)
 loadStoredReports(); // perzistentní analytické reporty (přežívají restart GUI)
 input.focus();

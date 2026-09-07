@@ -75,18 +75,48 @@ def test_stale_data_triggers_fetch(db, monkeypatch):
     assert len(db.get_dividends("KO")) == 1
 
 
-def test_fmp_limit_exceeded_keeps_stale_cache(db, monkeypatch):
-    """Vyčerpání FMP limitu → ticker zůstává v cache (stale_cache), žádný fallback."""
+def test_fmp_limit_exceeded_falls_to_yfinance(db, monkeypatch):
+    """Vyčerpání FMP limitu + Tiingo nenakonfigurovaný → fallback na yfinance."""
     import dividend_tracker.data.fmp as fmp_mod
+    import dividend_tracker.data.sync as sync_mod
 
     # Předvyplnit čítač na hranici limitu.
     for _ in range(DAILY_LIMIT):
         db.record_api_call("fmp", daily_limit=DAILY_LIMIT)
 
     monkeypatch.setenv("FMP_API_KEY", "test-key")
+    monkeypatch.delenv("TIINGO_API_KEY", raising=False)
     monkeypatch.setattr(fmp_mod, "_get_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nesmí být voláno")))
 
+    called = []
+    monkeypatch.setattr(
+        sync_mod, "sync_via_yfinance", lambda db_, tk: called.append(tk) or db_.mark_dividend_sync(tk)
+    )
+
     db.upsert_stock("KO", name="Coca-Cola")  # NULL timestamps → stale, ale limit je pryč
+    result = sync_fundamentals(db, ["KO"])
+    assert result["results"]["KO"] == "yfinance"
+    assert called == ["KO"]
+
+
+def test_all_providers_fail_keeps_stale_cache(db, monkeypatch):
+    """FMP limit + Tiingo chyba + yfinance chyba → ticker zůstává v cache (stale_cache)."""
+    import dividend_tracker.data.fmp as fmp_mod
+    import dividend_tracker.data.sync as sync_mod
+
+    for _ in range(DAILY_LIMIT):
+        db.record_api_call("fmp", daily_limit=DAILY_LIMIT)
+
+    monkeypatch.setenv("FMP_API_KEY", "test-key")
+    monkeypatch.delenv("TIINGO_API_KEY", raising=False)
+    monkeypatch.setattr(fmp_mod, "_get_json", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nesmí být voláno")))
+
+    def yf_fail(db_, tk):
+        raise RuntimeError("yfinance down")
+
+    monkeypatch.setattr(sync_mod, "sync_via_yfinance", yf_fail)
+
+    db.upsert_stock("KO", name="Coca-Cola")  # NULL timestamps → stale
     result = sync_fundamentals(db, ["KO"])
     assert result["results"]["KO"] == "stale_cache"
 

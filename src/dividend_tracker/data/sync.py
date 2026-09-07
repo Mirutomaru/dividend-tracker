@@ -4,11 +4,13 @@ Pravidla (viz zadání):
 1. **Před voláním externího API se vždy čte DB.** Fundamenty se stahují jen,
    pokud chybí nebo jsou starší než :data:`FUNDAMENTAL_TTL` (72 h); dividendová
    historie má vlastní delší TTL :data:`DIVIDEND_TTL` (7 dní).
-2. **FMP** je primární zdroj fundamentů s denním limitem 250 volání — při
-   vyčerpání se aktualizace zastaví a čte se pouze z DB (stale data jsou
-   raději než vyhozený limit).
-3. **Fallback** bez FMP klíče / při chybě: yfinance (info + dividendy), což je
-   i zdroj aktuálních cen (:mod:`dividend_tracker.data.quotes`).
+2. **Provider chain** pro dividendy a profil: FMP (limit 250 volání/den) →
+   Tiingo (limit 10 000 volání/den, ``TIINGO_API_KEY``) → yfinance fallback.
+   Každý provider se používá jen pokud je nakonfigurovaný a má zbývající limit;
+   při vyčerpání / chybě pokračuje řetězec dál (stale data jsou raději než
+   vyhozený limit).
+3. **Aktuální ceny** patří do :mod:`dividend_tracker.data.quotes` — tam je
+   primárním zdrojem Tiingo a fallbackem yfinance.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from .db import Database
 from .fmp import FMPCacheClient, FMPError, FMPLimitExceeded
+from .tiingo import TiingoCacheClient, TiingoError, TiingoLimitExceeded
 
 log = logging.getLogger(__name__)
 
@@ -95,6 +98,68 @@ def _calendar_rows_from_fmp(ticker: str, items: List[Dict[str, Any]]) -> List[Di
             }
         )
     return rows
+
+
+def _dividend_rows_from_tiingo(
+    ticker: str, items: List[Dict[str, Any]]
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Normalizuje Tiingo ``corporate-actions/{ticker}/dividends`` na řádky pro DB.
+
+    Tiingo vrací i budoucí distribuce (exDate > dnes) — ty patří do kalendáře,
+    ne do historie. Frekvence se mapuje přes :data:`tiingo._FREQUENCY_MAP`.
+    """
+    from .tiingo import _FREQUENCY_MAP
+
+    today = date.today().isoformat()
+    hist_rows: List[Dict[str, Any]] = []
+    cal_rows: List[Dict[str, Any]] = []
+    for item in items:
+        ex_date = _parse_date(item.get("exDate"))
+        amount = _to_amount(item.get("distribution"))
+        if not ex_date or amount is None:
+            continue
+        freq = _FREQUENCY_MAP.get(str(item.get("distributionFreqency") or "").strip().lower())
+        common = {
+            "ticker": ticker,
+            "ex_date": ex_date,
+            "payment_date": _parse_date(item.get("paymentDate")),
+            "record_date": _parse_date(item.get("recordDate")),
+            "dividend_amount": amount,
+        }
+        if ex_date >= today:
+            cal_rows.append({**common})  # budoucí výplata → kalendář (bez frequency)
+        else:
+            hist_rows.append({**common, "frequency": freq})
+    return hist_rows, cal_rows
+
+
+def sync_via_tiingo(tiingo: TiingoCacheClient, db: Database, ticker: str) -> None:
+    """Stáhne dividendovou historii + budoucí výplaty z Tiingo (1 volání na ticker).
+
+    Profil společnosti se stahuje jen při prvním syncu tickera (2. volání),
+    aby se limit šetřil — Tiingo metadata neobsahují sektor, proto se doplní
+    jen name/currency/exchange a zbytek nechá na dalším provideru / yfinance.
+    """
+    tk = ticker.upper()
+    hist_rows, cal_rows = _dividend_rows_from_tiingo(tk, tiingo.get_dividends(tk))
+
+    stock = db.get_stock(tk)
+    if stock is None:  # první sync — doplnit základní profil (1 volání navíc)
+        meta = tiingo.get_meta(tk) or {}
+        db.upsert_stock(
+            tk,
+            name=meta.get("name"),
+            currency=meta.get("currency") or "USD",
+            exchange=meta.get("exchange"),
+            country=None,  # Tiingo metadata nemají zemi původu
+            sector=None,
+            industry=None,
+        )
+
+    db.replace_dividends(hist_rows)
+    if cal_rows:
+        db.replace_calendar(cal_rows)
+    db.mark_dividend_sync(tk)
 
 
 def sync_via_fmp(fmp: FMPCacheClient, db: Database, ticker: str) -> None:
@@ -182,6 +247,39 @@ def _is_fresh(ts: Optional[float], ttl: float, now: float) -> bool:
     return ts is not None and (now - ts) < ttl
 
 
+def _sync_one_ticker(
+    fmp: FMPCacheClient, tiingo: TiingoCacheClient, db: Database, tk: str
+) -> Optional[str]:
+    """Provider chain pro jeden ticker: FMP → Tiingo → yfinance.
+
+    Vrátí název provideru, který data dodal (``"fmp"`` / ``"tiingo"`` /
+    ``"yfinance"``), nebo ``None``, pokud žádný nedodal (stale cache / error).
+    Neuskutečněné volání neexistujícího provideru se do limitu nepočítá.
+    """
+    if fmp.configured:
+        try:
+            sync_via_fmp(fmp, db, tk)
+            return "fmp"
+        except FMPLimitExceeded as exc:
+            log.warning("FMP limit vyčerpán — %s zkusím Tiingo/yfinance (%s)", tk, exc)
+        except FMPError as exc:
+            log.warning("FMP selhalo pro %s (%s), zkusím Tiingo/yfinance", tk, exc)
+
+    if tiingo.configured:
+        try:
+            sync_via_tiingo(tiingo, db, tk)
+            return "tiingo"
+        except (TiingoLimitExceeded, TiingoError) as exc:
+            log.warning("Tiingo selhalo pro %s (%s), zkusím yfinance", tk, exc)
+
+    try:
+        sync_via_yfinance(db, tk)
+        return "yfinance"
+    except Exception as exc:  # noqa: BLE001 — provider vrhá různé typy (429, JSON, timeout)
+        log.error("fallback yfinance selhal pro %s: %s", tk, exc)
+        return None
+
+
 def sync_fundamentals(
     db: Database, tickers: List[str], force: bool = False
 ) -> Dict[str, Any]:
@@ -189,11 +287,12 @@ def sync_fundamentals(
 
     Vrátí souhrn::
 
-        {"results": {ticker: "cached"|"fmp"|"yfinance"|"stale_cache"|"error"},
-         "counts": {...}, "fmp_usage": {...}}
+        {"results": {ticker: "cached"|"fmp"|"tiingo"|"yfinance"|"stale_cache"|"error"},
+         "counts": {...}, "fmp_usage": {...}, "tiingo_usage": {...}}
     """
     now = time.time()
     fmp = FMPCacheClient(db)
+    tiingo = TiingoCacheClient(db)
     results: Dict[str, str] = {}
 
     for tk in tickers:
@@ -208,27 +307,18 @@ def sync_fundamentals(
             results[tk] = "cached"  # cache-first: žádné externí volání
             continue
 
-        try:
-            if not fmp.configured:
-                raise FMPError("FMP API klíč není nastaven (FMP_API_KEY).")
-            sync_via_fmp(fmp, db, tk)
-            results[tk] = "fmp"
-        except FMPLimitExceeded as exc:
-            log.warning("FMP limit vyčerpán — %s zůstává v cache (%s)", tk, exc)
-            results[tk] = "stale_cache" if stock else "error"
-        except FMPError as exc:
-            log.warning("FMP selhalo pro %s (%s), fallback na yfinance", tk, exc)
-            try:
-                sync_via_yfinance(db, tk)
-                results[tk] = "yfinance"
-            except Exception as exc2:  # noqa: BLE001 — provider vrhá různé typy
-                log.error("fallback yfinance selhal pro %s: %s", tk, exc2)
-                results[tk] = "stale_cache" if stock else "error"
+        status = _sync_one_ticker(fmp, tiingo, db, tk)
+        results[tk] = status if status is not None else ("stale_cache" if stock else "error")
 
     counts: Dict[str, int] = {}
     for status in results.values():
         counts[status] = counts.get(status, 0) + 1
-    return {"results": results, "counts": counts, "fmp_usage": fmp.usage()}
+    return {
+        "results": results,
+        "counts": counts,
+        "fmp_usage": fmp.usage(),
+        "tiingo_usage": tiingo.usage(),
+    }
 
 
 def sync_all(db: Database, tickers: List[str], force: bool = False) -> Dict[str, Any]:

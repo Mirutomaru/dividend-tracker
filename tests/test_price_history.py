@@ -98,7 +98,7 @@ def test_sync_quotes_writes_daily_snapshot(monkeypatch, db):
 
     monkeypatch.setattr(
         quotes_mod, "fetch_quotes",
-        lambda tickers: {"KO": {"price": 61.0, "change": 0.5, "volume": 1000}},
+        lambda tickers, db=None: {"KO": {"price": 61.0, "change": 0.5, "volume": 1000}},
     )
     stats = sync_quotes(db, ["KO"])
     assert stats == {"updated": 1, "failed": 0}
@@ -112,7 +112,7 @@ def test_sync_quotes_writes_daily_snapshot(monkeypatch, db):
 def test_sync_quotes_failed_ticker_no_snapshot(monkeypatch, db):
     import dividend_tracker.data.quotes as quotes_mod
 
-    monkeypatch.setattr(quotes_mod, "fetch_quotes", lambda tickers: {})
+    monkeypatch.setattr(quotes_mod, "fetch_quotes", lambda tickers, db=None: {})
     stats = sync_quotes(db, ["KO"])
     assert stats == {"updated": 0, "failed": 1}
     assert db.get_price_history("KO") == []
@@ -126,7 +126,7 @@ def test_backfill_writes_history(monkeypatch, db):
     dates = _dates(3)
     monkeypatch.setattr(
         quotes_mod, "fetch_price_history",
-        lambda tickers, days=365: {"KO": [(d, 10.0 + i) for i, d in enumerate(dates)]},
+        lambda tickers, days=365, db=None: {"KO": [(d, 10.0 + i) for i, d in enumerate(dates)]},
     )
     result = backfill_price_history(db, ["KO"])
     assert result == {"points": 3, "tickers_with_data": 1}
@@ -140,7 +140,7 @@ def test_backfill_writes_history(monkeypatch, db):
 def test_backfill_empty(monkeypatch, db):
     import dividend_tracker.data.quotes as quotes_mod
 
-    monkeypatch.setattr(quotes_mod, "fetch_price_history", lambda tickers, days=365: {})
+    monkeypatch.setattr(quotes_mod, "fetch_price_history", lambda tickers, days=365, db=None: {})
     result = backfill_price_history(db, ["KO"])
     assert result == {"points": 0, "tickers_with_data": 0}
 

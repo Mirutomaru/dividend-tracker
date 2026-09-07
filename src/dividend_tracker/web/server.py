@@ -17,6 +17,7 @@ Architektura:
   POST /api/scan           {tickers?: [...]} → 202 {job_id} — scan (zelený flag + BUY_ZONE);
                            bez tickers = celá trvalá watchlista; job.extra.matches po dokončení
   GET  /api/fmp-status     stav čítače FMP denních volání (limit 250/den)
+  GET  /api/tiingo-status  stav čítače Tiingo denních volání (limit 10 000/den)
   GET  /api/reports        uložené analytické reporty z lokální DB (přežívají restart GUI)
   DELETE /api/reports/<ticker>   smaže uložený report tickera (idempotentní)
   =======================  =====================================================
@@ -303,6 +304,17 @@ class WebApp(BaseHTTPRequestHandler):
                 self._send_json(
                     {
                         "configured": bool(os.environ.get("FMP_API_KEY", "").strip()),
+                        **usage,
+                    }
+                )
+                return
+            if path == "/api/tiingo-status":
+                from ..data.tiingo import TiingoCacheClient
+
+                usage = TiingoCacheClient(self.db).usage()
+                self._send_json(
+                    {
+                        "configured": bool(os.environ.get("TIINGO_API_KEY", "").strip()),
                         **usage,
                     }
                 )

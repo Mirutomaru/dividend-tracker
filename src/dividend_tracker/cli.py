@@ -247,6 +247,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                     f"FMP: {usage['calls_used']}/{usage['daily_limit']} volání dnes "
                     f"(zbývá {usage.get('remaining')})"
                 )
+            tusage = summary.get("tiingo_usage") or {}
+            if tusage.get("daily_limit"):
+                print(
+                    f"Tiingo: {tusage['calls_used']}/{tusage['daily_limit']} volání dnes "
+                    f"(zbývá {tusage.get('remaining')})"
+                )
             quotes = summary.get("quotes") or {}
             if quotes:
                 print(
@@ -553,6 +559,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f".env soubory: {', '.join(str(p) for p in files) or '(žádný — výchozí ' + str(DEFAULT_ENV_FILE) + ')'}")
             key = os.environ.get("FMP_API_KEY", "").strip()
             print(f"FMP_API_KEY:  {mask_secret(key)}")
+            tkey = os.environ.get("TIINGO_API_KEY", "").strip()
+            print(f"TIINGO_API_KEY: {mask_secret(tkey)}")
             print(f"DB:           {os.environ.get('DIVTRACK_DB', DEFAULT_DB_PATH)}")
             from .data.watchlist_store import DEFAULT_WATCHLIST_FILE
 
@@ -562,13 +570,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 print("Použití: divtrack config set KLIC=HODNOTA", file=sys.stderr)
                 return 2
             k, _, v = args.kv[0].partition("=")
-            allowed = {"FMP_API_KEY", "DIVTRACK_DB", "DIVTRACK_WATCHLIST"}
+            allowed = {"FMP_API_KEY", "TIINGO_API_KEY", "DIVTRACK_DB", "DIVTRACK_WATCHLIST"}
             if k.strip() not in allowed:
                 print(f"Neznámý klíč '{k}'. Povolené: {', '.join(sorted(allowed))}", file=sys.stderr)
                 return 2
             path = write_env_value(k.strip(), v.strip())
             os.environ[k.strip()] = v.strip()
-            shown = mask_secret(v) if k == "FMP_API_KEY" else v
+            shown = mask_secret(v) if k in ("FMP_API_KEY", "TIINGO_API_KEY") else v
             print(f"Nastaveno {k}={shown} → {path}")
         elif action == "unset":
             if len(args.kv) != 1:

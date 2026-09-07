@@ -3,8 +3,9 @@
 - :mod:`fetcher`  — yfinance snapshoty (původní analytická cesta)
 - :mod:`db`       — lokální SQLite databáze (stocks, dividends_history, calendar, quotes, api_usage)
 - :mod:`fmp`      — FMP klient s denním čítačem volání (limit 250/den)
-- :mod:`quotes`   — aktuální ceny z odděleného zdroje (yfinance batch) → tabulka ``quotes``
-- :mod:`sync`     — cache-first orchestrace (TTL 72 h fundamenty / 7 dní dividendy, fallback yfinance)
+- :mod:`tiingo`   — Tiingo klient s denním čítačem volání (limit 10 000/den)
+- :mod:`quotes`   — aktuální ceny a historie cen: primárně Tiingo, fallback yfinance → tabulky ``quotes``/``price_history``
+- :mod:`sync`     — cache-first orchestrace (TTL 72 h fundamenty / 7 dní dividendy, provider chain FMP → Tiingo → yfinance)
 """
 
 from .alerts import VALID_CONDITIONS, add_alert, evaluate_alerts
