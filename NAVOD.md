@@ -208,6 +208,16 @@ divtrack web --port 9000        # jiný port
 
 Otevři v prohlížeči `http://127.0.0.1:8742`. Zastavíš Ctrl+C.
 
+Co umí přímo v prohlížeči (bez CLI):
+- **★ ve watchlistě** — kliknutím na hvězdičku přidáš/odebereš ticker do trvalé
+  watchlisty; nad tabulkou je i tlačítko „+ Sledovat“. Sledovaný ticker, který ještě
+  nemá data (nesynchronizovaný), se zobrazí jako prázdný řádek s ★.
+- **Portfolio** — formulář „Přidat pozici“ (ticker, počet akcií, nákupní cena)
+  přidá/aktualizuje drženou pozici a automaticky ji i do watchlisty; ✕ na konci
+  řádku pozici smaže. Sekce ukazuje souhrn držeb a cíl ročního příjmu s progress barem.
+- **Cíl ročního příjmu** — zadej částku a „Uložit cíl“ (tlačítko „Odebrat cíl“ ho
+  smaže); portfolio pak ukazuje, kolik % cíle aktuální dividendy pokrývají.
+
 ### Tkinter GUI (desktop)
 
 ```bash

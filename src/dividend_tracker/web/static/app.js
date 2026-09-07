@@ -42,6 +42,15 @@ const alertConditionSel = $("#alert-condition");
 const alertThresholdInput = $("#alert-threshold");
 const exportWlBtn = $("#export-wl-btn");
 const exportAnalysisBtn = $("#export-analysis-btn");
+const wlAddForm = $("#wl-add-form");
+const wlAddTickerInput = $("#wl-add-ticker");
+const pfAddForm = $("#pf-add-form");
+const pfTickerInput = $("#pf-ticker");
+const pfSharesInput = $("#pf-shares");
+const pfCostInput = $("#pf-cost");
+const incomeTargetForm = $("#income-target-form");
+const incomeTargetInput = $("#income-target-input");
+const incomeTargetClearBtn = $("#income-target-clear");
 
 let alertRows = [];
 
@@ -201,6 +210,10 @@ function renderTable(rows) {
 function wlCell(key, row) {
   const v = row[key];
   switch (key) {
+    case "in_watchlist": {
+      // ★ trvalá watchlista — kliknutím se přepne (delegace na tbody)
+      return `<button type="button" class="wl-star-btn ${v ? "active" : ""}" data-ticker="${escapeHtml(row.ticker)}" title="${v ? "Odebrat z trvalé watchlisty" : "Přidat do trvalé watchlisty"}">${v ? "★" : "☆"}</button>`;
+    }
     case "ticker": return `<span class="td-ticker">${escapeHtml(v)}</span>`;
     case "name": return escapeHtml(v || "—");
     case "sector": return escapeHtml(v || "—");
@@ -266,7 +279,7 @@ function renderWatchlist() {
   });
 
   watchlistBody.innerHTML = sorted.map((row) => {
-    const cells = ["ticker", "name", "sector", "price", "change", "volume", "dps_ttm",
+    const cells = ["in_watchlist", "ticker", "name", "sector", "price", "change", "volume", "dps_ttm",
       "yield_pct", "net_yield_pct", "growth_5y_pct", "streak_years", "next_ex_date", "next_dividend",
       "low_52w", "high_52w", "drawdown_from_high_pct", "percentile_52w"]
       .map((k) => `<td class="${/^(price|change|volume|dps_ttm|yield_pct|net_yield_pct|growth_5y_pct|streak_years|next_dividend|low_52w|high_52w|drawdown_from_high_pct|percentile_52w)$/.test(k) ? "num" : ""}">${wlCell(k, row)}</td>`)
@@ -301,6 +314,54 @@ async function loadWatchlist() {
     }
   } catch {
     /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+/* ------------------------------ trvalá watchlista (★) ------------------------------ */
+
+/** Přepne ★/☆ u tickera v trvalé watchlistě a překreslí tabulku. */
+async function toggleWatchlistStar(ticker) {
+  const row = wlRows.find((r) => r.ticker === ticker);
+  if (!row) return;
+  try {
+    let res;
+    if (row.in_watchlist) {
+      res = await fetch(`/api/watchlist/${encodeURIComponent(ticker)}`, { method: "DELETE" });
+    } else {
+      res = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker }),
+      });
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    row.in_watchlist = !row.in_watchlist; // optimistické překreslení bez celkového fetchu
+    renderWatchlist();
+  } catch {
+    await loadWatchlist(); // server nedostupný → obnovit skutečný stav
+  }
+}
+
+/** Přidání tickera do trvalé watchlisty (formulář nad tabulkou). */
+async function submitWlAdd(e) {
+  e.preventDefault();
+  const ticker = wlAddTickerInput.value.trim().toUpperCase();
+  if (!ticker) return;
+  try {
+    const res = await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticker }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || `Chyba při přidávání do watchlisty (HTTP ${res.status})`);
+      return;
+    }
+    wlAddTickerInput.value = "";
+    await loadWatchlist(); // nový ticker se objeví po dalším syncu dat — ★ už ale svítí
+  } catch {
+    alert("Server nedostupný — watchlista se nepodařila aktualizovat.");
   }
 }
 
@@ -356,7 +417,8 @@ function renderPortfolio() {
       "unrealized_pl_pct", "dps_ttm", "annual_income", "net_annual_income", "yield_on_cost_pct"]
       .map((k) => `<td class="${/^(shares|avg_cost|price|market_value|unrealized_pl_pct|dps_ttm|annual_income|net_annual_income|yield_on_cost_pct)$/.test(k) ? "num" : ""}">${pfCell(k, row)}</td>`)
       .join("");
-    return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}</tr>`;
+    const removeBtn = `<td><button type="button" class="alert-remove-btn pf-remove-btn" data-ticker="${escapeHtml(row.ticker)}" title="Smazat pozici">✕</button></td>`;
+    return `<tr data-ticker="${escapeHtml(row.ticker)}">${cells}${removeBtn}</tr>`;
   }).join("");
 
   pfCount.textContent = `${pfRows.length} pozic`;
@@ -401,7 +463,8 @@ async function loadPortfolio() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     pfRows = (data.portfolio && data.portfolio.positions) || [];
-    if (pfRows.length) {
+    const targetConfigured = !!(data.income_target && data.income_target.configured);
+    if (pfRows.length || targetConfigured) {
       pfSection.classList.remove("hidden");
       renderPortfolioSummary(data.portfolio, data.income_target);
       renderPortfolio();
@@ -410,6 +473,89 @@ async function loadPortfolio() {
     }
   } catch {
     /* server nedostupný — zkusit znovu při dalším načtení */
+  }
+}
+
+/* ------------------------------ portfolio: pozice + cíl příjmu ------------------------------ */
+
+/** Přidá/aktualizuje drženou pozici (formulář v sekci Portfolio). */
+async function submitPfAdd(e) {
+  e.preventDefault();
+  const ticker = pfTickerInput.value.trim().toUpperCase();
+  if (!ticker) return;
+  const sharesRaw = pfSharesInput.value;
+  if (sharesRaw === "") return;
+  const payload = { ticker, shares: Number(sharesRaw) };
+  const costRaw = pfCostInput.value;
+  if (costRaw !== "") payload.avg_cost = Number(costRaw);
+  try {
+    const res = await fetch("/api/portfolio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || `Chyba při přidávání pozice (HTTP ${res.status})`);
+      return;
+    }
+    pfTickerInput.value = "";
+    pfSharesInput.value = "";
+    pfCostInput.value = "";
+    await loadPortfolio();
+  } catch {
+    alert("Server nedostupný — pozice se nepodařila přidat.");
+  }
+}
+
+/** Smazá drženou pozici (tlačítko ✕ v řádku tabulky). */
+async function removePfPosition(ticker) {
+  try {
+    const res = await fetch(`/api/portfolio/${encodeURIComponent(ticker)}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 405) throw new Error(`HTTP ${res.status}`);
+    pfRows = pfRows.filter((r) => r.ticker !== ticker);
+    renderPortfolio();
+    await loadPortfolio(); // obnovit souhrn (hodnota, příjem, cíl)
+  } catch {
+    await loadPortfolio();
+  }
+}
+
+/** Uloží cíl ročního příjmu (formulář). */
+async function submitIncomeTarget(e) {
+  e.preventDefault();
+  const raw = incomeTargetInput.value;
+  if (raw === "") return;
+  try {
+    const res = await fetch("/api/income-target", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: Number(raw) }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || `Chyba při ukládání cíle (HTTP ${res.status})`);
+      return;
+    }
+    incomeTargetInput.value = "";
+    await loadPortfolio();
+  } catch {
+    alert("Server nedostupný — cíl se nepodařilo uložit.");
+  }
+}
+
+/** Odebere cíl ročního příjmu (tlačítko „Odebrat cíl“). */
+async function clearIncomeTarget() {
+  try {
+    const res = await fetch("/api/income-target", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: 0 }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadPortfolio();
+  } catch {
+    alert("Server nedostupný — cíl se nepodařilo odebrat.");
   }
 }
 
@@ -928,6 +1074,24 @@ refreshFmpBtn.addEventListener("click", loadFmpStatus);
 
 // Přidání upozornění (formulář).
 alertForm.addEventListener("submit", submitAlert);
+
+// Trvalá watchlista — formulář + ★ toggle v řádku.
+wlAddForm.addEventListener("submit", submitWlAdd);
+watchlistBody.addEventListener("click", (e) => {
+  const btnEl = e.target.closest(".wl-star-btn");
+  if (!btnEl) return;
+  toggleWatchlistStar(btnEl.dataset.ticker);
+});
+
+// Portfolio — přidání pozice, smazání pozice, cíl ročního příjmu.
+pfAddForm.addEventListener("submit", submitPfAdd);
+pfBody.addEventListener("click", (e) => {
+  const btnEl = e.target.closest(".pf-remove-btn");
+  if (!btnEl) return;
+  removePfPosition(btnEl.dataset.ticker);
+});
+incomeTargetForm.addEventListener("submit", submitIncomeTarget);
+incomeTargetClearBtn.addEventListener("click", clearIncomeTarget);
 
 // Smazání pravidla — delegace na tlačítko v řádku.
 alertsBody.addEventListener("click", (e) => {

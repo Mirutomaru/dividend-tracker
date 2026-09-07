@@ -96,9 +96,14 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
     # Přepsání sazeb z databáze (sazby lze kdykoli upravit bez kódu).
     overrides = {k: v for k, v in db.list_settings().items() if k.startswith("withholding_")}
 
+    # Trvalá watchlista — UI podle toho vykreslí ★ toggle (přidat/odebrat sledování).
+    watched = {r["ticker"] for r in db.list_watchlist()}
+
     rows: List[Dict[str, Any]] = []
+    seen: set = set()
     for stock in db.list_stocks():  # ORDER BY ticker → abecedně
         tk = stock["ticker"]
+        seen.add(tk)
         quote = db.get_quote(tk) or {}
         price = quote.get("current_price")
 
@@ -124,6 +129,8 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
             {
                 "ticker": tk,
                 "name": stock.get("name"),
+                # ★ trvalá watchlista (UI toggle) — True = sledováno
+                "in_watchlist": tk in watched,
                 "currency": stock.get("currency") or "USD",
                 "exchange": stock.get("exchange"),
                 "country": stock.get("country"),
@@ -148,6 +155,42 @@ def build_watchlist_rows(db: Database) -> List[Dict[str, Any]]:
                 "percentile_52w": stats_52w.get("percentile_52w"),
             }
         )
+
+    # Sledované tickery bez dat v DB (přidané do watchlisty, ale ještě nesynchronizované)
+    # — zobrazí se jako prázdný řádek s ★, aby uživatel viděl, že jsou sledovány.
+    for wrow in db.list_watchlist():
+        tk = wrow["ticker"]
+        if tk in seen:
+            continue
+        rows.append(
+            {
+                "ticker": tk,
+                "name": None,
+                "in_watchlist": True,
+                "currency": "USD",
+                "exchange": None,
+                "country": None,
+                "sector": None,
+                "price": None,
+                "change": None,
+                "volume": None,
+                "quote_age_s": None,
+                "dps_ttm": 0.0,
+                "yield_pct": None,
+                "net_yield_pct": None,
+                "payout_pct": None,
+                "growth_5y_pct": None,
+                "streak_years": None,
+                "next_ex_date": None,
+                "next_dividend": None,
+                "low_52w": None,
+                "high_52w": None,
+                "drawdown_from_high_pct": None,
+                "percentile_52w": None,
+            }
+        )
+
+    rows.sort(key=lambda r: r["ticker"])
     return rows
 
 

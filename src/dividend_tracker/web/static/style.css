@@ -12,6 +12,7 @@
   --border: rgba(0, 0, 0, 0.08);
   --accent: #0071e3;
   --accent-hover: #0077ed;
+  --blue: #0a84ff;
   --green: #34c759;
   --yellow: #ff9f0a;
   --red: #ff3b30;
@@ -445,6 +446,34 @@ tr.in-zone td:first-child::before { content: "●"; color: var(--green); margin-
   color: var(--text-secondary); padding: 4px 8px; border-radius: 8px; flex-shrink: 0;
 }
 .report-remove-btn:hover { background: rgba(255,59,48,0.12); color: #ff3b30; }
+
+/* Hlavní tlačítko formulářů (přidat pozici / cíl / sledovat) */
+.btn-primary {
+  padding: 7px 16px; font-size: 13px; font-weight: 600; color: #fff;
+  background: var(--accent); border-radius: 10px; flex-shrink: 0;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:active { transform: scale(0.97); }
+
+/* Formuláře watchlisty a portfolia (stejný styl jako #alert-form) */
+#wl-add-form, #pf-add-form, #income-target-form {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px;
+}
+#wl-add-form input, #pf-add-form input, #income-target-form input {
+  padding: 7px 10px; border-radius: 10px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary);
+}
+#wl-add-form input:focus, #pf-add-form input:focus, #income-target-form input:focus {
+  outline: none; border-color: var(--blue);
+}
+
+/* ★ toggle trvalé watchlisty v řádku tabulky */
+.wl-star-btn {
+  border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1;
+  color: var(--text-secondary); padding: 2px 4px; border-radius: 8px;
+}
+.wl-star-btn:hover { background: rgba(0, 122, 255, 0.08); }
+.wl-star-btn.active { color: #f5a623; text-shadow: 0 0 8px rgba(245, 166, 35, 0.35); }
 
 /* ---------------- Footer ---------------- */
 

@@ -180,6 +180,28 @@ class WebApp(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ util
 
+    def _read_json_body(self) -> Optional[Dict[str, Any]]:
+        """Přečte a parsuje JSON tělo requestu; vrací ``None`` při chybě (400 už odesláno)."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+        except (ValueError, UnicodeDecodeError):
+            self._send_error_json(400, "Neplatné JSON tělo.")
+            return None
+        if not isinstance(payload, dict):
+            self._send_error_json(400, "JSON tělo musí být objekt.")
+            return None
+        return payload
+
+    def _valid_ticker(self, value: Any) -> Optional[str]:
+        """Normalizuje ticker na uppercase; vrací ``None`` pokud neplatný (400 odesláno)."""
+        t = str(value or "").strip().upper()
+        if not TICKER_RE.match(t):
+            self._send_error_json(400, f"Neplatný ticker: {value!r}")
+            return None
+        return t
+
     def _send_json(self, payload: Dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -364,14 +386,19 @@ class WebApp(BaseHTTPRequestHandler):
             self._handle_sync()
             return
         if path == "/api/alerts":
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-                raw = self.rfile.read(length) if length else b""
-                payload = json.loads(raw.decode("utf-8")) if raw else {}
-            except (ValueError, UnicodeDecodeError):
-                self._send_error_json(400, "Neplatné JSON tělo.")
+            payload = self._read_json_body()
+            if payload is None:
                 return
             self._handle_alerts_post(payload)
+            return
+        if path == "/api/watchlist":
+            self._handle_watchlist_post()
+            return
+        if path == "/api/portfolio":
+            self._handle_portfolio_post()
+            return
+        if path == "/api/income-target":
+            self._handle_income_target_post()
             return
         if path != "/api/analyze":
             self._send_error_json(404, "Nenalezeno.")
@@ -436,6 +463,78 @@ class WebApp(BaseHTTPRequestHandler):
         log.info("sync job %s: cache-first sync pro %s (force=%s)", job.id, ", ".join(tickers), force)
         self._send_json({"job_id": job.id}, status=202)
 
+    def _handle_watchlist_post(self) -> None:
+        """Přidá ticker do trvalé watchlisty (+ JSON záloha)."""
+        from ..data import watchlist_store
+
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        ticker = self._valid_ticker(payload.get("ticker"))
+        if ticker is None:
+            return
+        note = str(payload.get("note") or "").strip() or None
+        added = not self.db.is_in_watchlist(ticker)
+        self.db.upsert_watchlist(ticker, note=note)  # COALESCE — existující poznámka zůstane
+        if added:
+            try:
+                # explicitní cesta (modulová konstanta), aby testy mohly zálohu přesměrovat
+                watchlist_store.export_watchlist_file(self.db, watchlist_store.DEFAULT_WATCHLIST_FILE)
+            except OSError as exc:
+                log.warning("záloha watchlisty se nepodařila: %s", exc)
+        self._send_json({"ok": True, "watchlist": {"ticker": ticker, "note": note}}, status=201)
+
+    def _handle_portfolio_post(self) -> None:
+        """Přidá/aktualizuje drženou pozici (+ automaticky do trvalé watchlisty)."""
+        from ..data.watchlist_store import auto_add_to_watchlist
+
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        ticker = self._valid_ticker(payload.get("ticker"))
+        if ticker is None:
+            return
+        try:
+            shares = float(payload["shares"])
+        except (KeyError, TypeError, ValueError):
+            self._send_error_json(400, "Chybí nebo je neplatné 'shares' (počet akcií).")
+            return
+        if shares <= 0:
+            self._send_error_json(400, "'shares' musí být kladné číslo.")
+            return
+        avg_cost = payload.get("avg_cost")
+        try:
+            avg_cost_f = float(avg_cost) if avg_cost is not None else None
+        except (TypeError, ValueError):
+            self._send_error_json(400, "Neplatná 'avg_cost' (nákupní cena).")
+            return
+        currency = str(payload.get("currency") or "USD").strip().upper()[:3] or "USD"
+        self.db.upsert_position(ticker, shares=shares, avg_cost=avg_cost_f, currency=currency)
+        auto_add_to_watchlist(self.db, [ticker])  # pozice patří do trvalé watchlisty (jako CLI)
+        log.info("portfolio: pozice %s aktualizována (%.2f ks)", ticker, shares)
+        self._send_json({"ok": True}, status=201)
+
+    def _handle_income_target_post(self) -> None:
+        """Nastaví (nebo smaže při amount <= 0) cíl ročního příjmu."""
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        try:
+            amount = float(payload["amount"])
+        except (KeyError, TypeError, ValueError):
+            self._send_error_json(400, "Chybí nebo je neplatné 'amount' (roční příjem).")
+            return
+        if amount < 0:
+            self._send_error_json(400, "'amount' musí být nezáporné číslo.")
+            return
+        if amount > 0:
+            self.db.set_setting("income_target", str(amount))
+        else:
+            self.db.delete_setting("income_target")
+        from ..data.portfolio import build_income_target_report
+
+        self._send_json({"ok": True, "income_target": build_income_target_report(self.db)})
+
     # ----------------------------------------------------------------- DELETE
 
     def do_DELETE(self) -> None:  # noqa: N802 — API http.server
@@ -446,6 +545,30 @@ class WebApp(BaseHTTPRequestHandler):
                 self._send_error_json(400, f"Neplatný ticker: {ticker!r}")
                 return
             self.db.delete_report(ticker)
+            self._send_json({"ok": True})
+            return
+        if path.startswith("/api/watchlist/") and path != "/api/watchlist":
+            ticker = path.rsplit("/", 1)[-1].upper()
+            if not TICKER_RE.match(ticker):
+                self._send_error_json(400, f"Neplatný ticker: {ticker!r}")
+                return
+            from ..data import watchlist_store
+
+            self.db.remove_from_watchlist(ticker)
+            try:
+                # explicitní cesta (modulová konstanta), aby testy mohly zálohu přesměrovat
+                watchlist_store.export_watchlist_file(self.db, watchlist_store.DEFAULT_WATCHLIST_FILE)
+            except OSError as exc:
+                log.warning("záloha watchlisty se nepodařila: %s", exc)
+            self._send_json({"ok": True})
+            return
+        if path.startswith("/api/portfolio/") and path != "/api/portfolio":
+            ticker = path.rsplit("/", 1)[-1].upper()
+            if not TICKER_RE.match(ticker):
+                self._send_error_json(400, f"Neplatný ticker: {ticker!r}")
+                return
+            self.db.remove_position(ticker)
+            log.info("portfolio: pozice %s smazána", ticker)
             self._send_json({"ok": True})
             return
         if not (path.startswith("/api/alerts/") and path != "/api/alerts"):

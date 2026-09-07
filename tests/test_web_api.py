@@ -603,3 +603,143 @@ def test_delete_report_invalid_ticker_400(server):
     # "!" není v povolené množině [A-Z0-9.-] → 400 (i po upper())
     status, body = _request(server, "DELETE", "/api/reports/BAD!TICKER")
     assert status == 400 and "error" in body
+
+
+# ------------------------------------------------------------------ trvalá watchlista (★)
+
+@pytest.fixture()
+def wl_backup_path(tmp_path, monkeypatch):
+    """Přesměruje JSON zálohu watchlisty do tmp (aby testy nešpinily ~/.config)."""
+    from dividend_tracker.data import watchlist_store
+
+    path = tmp_path / "watchlist.json"
+    monkeypatch.setattr(watchlist_store, "DEFAULT_WATCHLIST_FILE", path)
+    return path
+
+
+def _wl_row(body: dict, ticker: str) -> dict:
+    for row in body["rows"]:
+        if row["ticker"] == ticker:
+            return row
+    raise AssertionError(f"řádek {ticker} chybí v odpovědi watchlisty")
+
+
+def test_watchlist_add_and_star(seeded_server, wl_backup_path):
+    """POST /api/watchlist přidá ★; GET ho vykreslí jako in_watchlist=True."""
+    status, body = _request(seeded_server, "POST", "/api/watchlist", {"ticker": "ko"})  # lowercase → normalizace
+    assert status == 201 and body["ok"] is True
+
+    status, body = _request(seeded_server, "GET", "/api/watchlist")
+    assert status == 200
+    assert _wl_row(body, "KO")["in_watchlist"] is True
+    assert _wl_row(body, "JNJ")["in_watchlist"] is False
+
+    # záložní soubor se synchronizoval
+    import json as _json
+
+    payload = _json.loads(wl_backup_path.read_text(encoding="utf-8"))
+    assert [t["ticker"] for t in payload["tickers"]] == ["KO"]
+
+
+def test_watchlist_add_invalid_ticker(server, wl_backup_path):
+    status, body = _request(server, "POST", "/api/watchlist", {"ticker": "!!!"})
+    assert status == 400 and "error" in body
+
+
+def test_watchlist_remove(seeded_server, wl_backup_path):
+    """DELETE /api/watchlist/<T> odebere ★ (idempotentní)."""
+    _request(seeded_server, "POST", "/api/watchlist", {"ticker": "JNJ"})
+    status, body = _request(seeded_server, "DELETE", "/api/watchlist/JNJ")
+    assert status == 200 and body["ok"] is True
+
+    status, body = _request(seeded_server, "GET", "/api/watchlist")
+    assert _wl_row(body, "JNJ")["in_watchlist"] is False
+
+
+def test_watchlist_unsynced_ticker_shows_placeholder(seeded_server, wl_backup_path):
+    """Sledovaný ticker bez dat v DB se zobrazí jako prázdný řádek s ★."""
+    status, body = _request(seeded_server, "POST", "/api/watchlist", {"ticker": "MSFT"})
+    assert status == 201
+
+    status, body = _request(seeded_server, "GET", "/api/watchlist")
+    row = _wl_row(body, "MSFT")
+    assert row["in_watchlist"] is True
+    assert row["price"] is None and row["yield_pct"] is None
+
+
+def test_watchlist_delete_invalid_ticker(server):
+    status, body = _request(server, "DELETE", "/api/watchlist/BAD!TICKER")
+    assert status == 400 and "error" in body
+
+
+# ------------------------------------------------------------------ portfolio (pozice + cíl)
+
+def test_portfolio_add_position(portfolio_server, wl_backup_path):
+    """POST /api/portfolio přidá pozici a automaticky i do trvalé watchlisty."""
+    status, body = _request(
+        portfolio_server, "POST", "/api/portfolio",
+        {"ticker": "jnj", "shares": 10, "avg_cost": 150.0},
+    )
+    assert status == 201 and body["ok"] is True
+
+    status, body = _request(portfolio_server, "GET", "/api/portfolio")
+    pf = body["portfolio"]
+    assert pf["n_positions"] == 2
+    jnj = next(p for p in pf["positions"] if p["ticker"] == "JNJ")
+    assert jnj["shares"] == 10.0 and jnj["avg_cost"] == pytest.approx(150.0)
+
+    # pozice se automaticky dostala do trvalé watchlisty (jako CLI)
+    status, body = _request(portfolio_server, "GET", "/api/watchlist")
+    assert _wl_row(body, "JNJ")["in_watchlist"] is True
+
+
+def test_portfolio_add_invalid(server, wl_backup_path):
+    # chybějící shares → 400
+    status, body = _request(server, "POST", "/api/portfolio", {"ticker": "KO"})
+    assert status == 400 and "error" in body
+    # záporné shares → 400
+    status, body = _request(server, "POST", "/api/portfolio", {"ticker": "KO", "shares": -5})
+    assert status == 400 and "error" in body
+    # neplatný ticker → 400
+    status, body = _request(server, "POST", "/api/portfolio", {"ticker": "!!", "shares": 1})
+    assert status == 400 and "error" in body
+
+
+def test_portfolio_remove_position(portfolio_server):
+    """DELETE /api/portfolio/<T> smaže pozici."""
+    status, body = _request(portfolio_server, "DELETE", "/api/portfolio/KO")
+    assert status == 200 and body["ok"] is True
+
+    status, body = _request(portfolio_server, "GET", "/api/portfolio")
+    assert body["portfolio"]["n_positions"] == 0
+
+
+def test_portfolio_remove_invalid_ticker(server):
+    status, body = _request(server, "DELETE", "/api/portfolio/BAD!TICKER")
+    assert status == 400 and "error" in body
+
+
+# ------------------------------------------------------------------ cíl ročního příjmu
+
+def test_income_target_set_and_clear(portfolio_server):
+    """POST /api/income-target nastaví cíl; amount=0 ho odebere."""
+    # výchozí stav z fixture: cíl 1000
+    status, body = _request(portfolio_server, "GET", "/api/portfolio")
+    assert body["income_target"]["configured"] is True
+
+    status, body = _request(portfolio_server, "POST", "/api/income-target", {"amount": 2500})
+    assert status == 200 and body["ok"] is True
+    assert body["income_target"]["target_annual_income"] == pytest.approx(2500.0)
+
+    # odebrání cíle (amount = 0)
+    status, body = _request(portfolio_server, "POST", "/api/income-target", {"amount": 0})
+    assert status == 200 and body["income_target"] == {"configured": False}
+
+
+def test_income_target_invalid(server):
+    # chybějící amount → 400
+    status, body = _request(server, "POST", "/api/income-target", {})
+    assert status == 400 and "error" in body
+    # záporné amount → 400
+    status, body = _request(server, "POST", "/api/income-target", {"amount": -1})
+    assert status == 400 and "error" in body

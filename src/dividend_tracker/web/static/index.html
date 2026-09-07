@@ -40,10 +40,16 @@
           <span id="watchlist-count" class="table-count"></span>
         </div>
         <p class="table-hint">Data z lokální databáze (cache-first) · klik na záhlaví = seřazení vzestupně/sestupně podle libovolného atributu</p>
+        <!-- Trvalá watchlista — přidání sledovaného tickera -->
+        <form id="wl-add-form" autocomplete="off">
+          <input type="text" id="wl-add-ticker" placeholder="Přidat do trvalé watchlisty (např. KO)" required maxlength="10" style="width:280px">
+          <button type="submit" class="btn btn-primary">+ Sledovat</button>
+        </form>
         <div class="table-scroll">
           <table id="watchlist-table">
             <thead>
               <tr>
+                <th data-key="in_watchlist" class="sortable num" title="Trvalá watchlista — kliknutím přepne ★/☆">★</th>
                 <th data-key="ticker" class="sortable">Ticker</th>
                 <th data-key="name" class="sortable">Název</th>
                 <th data-key="sector" class="sortable">Sektor</th>
@@ -78,6 +84,14 @@
         </div>
         <p class="table-hint">Držené pozice z lokální databáze · příjem = počet akcií × TTM DPS (z dividendové historie)</p>
 
+        <!-- Přidání / úprava držené pozice -->
+        <form id="pf-add-form" autocomplete="off">
+          <input type="text" id="pf-ticker" placeholder="Ticker (např. KO)" required maxlength="10" style="width:130px">
+          <input type="number" id="pf-shares" placeholder="Počet akcií" step="any" min="0" required style="width:120px">
+          <input type="number" id="pf-cost" placeholder="Nákupní cena (volitelné)" step="0.01" min="0" style="width:170px">
+          <button type="submit" class="btn btn-primary">Přidat pozici</button>
+        </form>
+
         <!-- Souhrn -->
         <div id="portfolio-summary" class="pf-summary"></div>
 
@@ -90,6 +104,13 @@
           <div class="progress-track"><div id="target-progress-bar" class="progress-fill"></div></div>
           <p id="target-detail" class="pf-target-detail"></p>
         </div>
+
+        <!-- Nastavení cíle ročního příjmů -->
+        <form id="income-target-form" autocomplete="off">
+          <input type="number" id="income-target-input" placeholder="Cíl ročního příjmu (např. 12000)" step="any" min="0" style="width:220px">
+          <button type="submit" class="btn btn-primary">Uložit cíl</button>
+          <button type="button" id="income-target-clear" class="mini-btn" title="Odebrat cíl ročního příjmu">Odebrat cíl</button>
+        </form>
 
         <!-- Pozice -->
         <div class="table-scroll">
@@ -106,6 +127,7 @@
                 <th data-key="annual_income" class="sortable num">Příjem/rok</th>
                 <th data-key="net_annual_income" class="sortable num">Čistý příjem/rok</th>
                 <th data-key="yield_on_cost_pct" class="sortable num">Yield on cost %</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="portfolio-body"></tbody>
