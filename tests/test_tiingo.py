@@ -92,6 +92,33 @@ def test_401_raises_error(monkeypatch):
         tiingo_mod._get_json("https://api.tiingo.com/tiingo/daily/KO", "bad-key")
 
 
+def test_read_timeout_raises_tiingo_error(monkeypatch):
+    """Regrese: timeout PŘI ČTENÍ TĚLA ODPOVĚDI (ne urlopen) → TiingoError, ne TimeoutError.
+
+    Scénář syncu 2026-09-09 — Tiingo vrátil headers v pořádku, ale `resp.read()`
+    spadl s TimeoutError a celý provider chain se zhroutil (TimeoutError není
+    podtypem TiingoError). Teď se chytí a sync pokračuje na yfinance.
+    """
+
+    import dividend_tracker.data.tiingo as tiingo_mod
+
+    class FakeResp:
+        def read(self) -> bytes:
+            raise TimeoutError("The read operation timed out")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        "dividend_tracker.data.tiingo.urllib.request.urlopen", lambda req, timeout=None: FakeResp()
+    )
+    with pytest.raises(TiingoError, match="timeout"):
+        tiingo_mod._get_json("https://api.tiingo.com/tiingo/daily/KO/prices", "test-key")
+
+
 def test_auth_header_uses_token_scheme(monkeypatch):
     """Tiingo očekává ``Authorization: Token <klíč>`` — Bearer vrací 403 „Please supply a token“."""
     import json as _json

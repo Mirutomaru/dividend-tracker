@@ -94,6 +94,8 @@ def _get_json(url: str, api_key: str, timeout: float = 15.0) -> Any:
         raise TiingoError(f"Tiingo HTTP {exc.code} pro {url.split('?')[0]}") from exc
     except urllib.error.URLError as exc:
         raise TiingoError(f"síťová chyba při volání Tiingo: {exc.reason}") from exc
+    except OSError as exc:  # TimeoutError (i při čtení těla odpovědi) → fallback
+        raise TiingoError(f"timeout/síťová chyba při volání Tiingo: {exc}") from exc
 
 
 class TiingoCacheClient:
