@@ -112,7 +112,7 @@ src/dividend_tracker/
 
 ### Stav ověření (poslední kontrola)
 ```bash
-.venv/bin/python -m pytest        # → 314 passed
+.venv/bin/python -m pytest        # → 316 passed
 .venv/bin/ruff check src tests    # → All checks passed!
 .venv/bin/mypy                    # → Success: no issues found in 35 source files
 git status                        # → clean (main)
@@ -138,9 +138,10 @@ git status                        # → clean (main)
 
 > Udržuj tuhle sekci vždy aktuální — co je v letu, kde jsme, jak pokračovat.
 
-**Nic v letu** (2026-09-07) — hotovo: „web GUI správa watchlisty/portfolia“,
-„cron noční sync“, „scan v web GUI“, **grafy**, **valuační metriky + TWR/IRR + tooltipy**,
-oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/scripts/`,
+**Nic v letu** (2026-09-09) — hotovo: oprava nočního syncu (dvě chyby: `api_usage` UNIQUE + Tiingo timeout),
+live sync doplnil ceny do všech 10 tickerů watchlisty, web server restartnut na aktuální kód.
+Předchozí stav: „web GUI správa watchlisty/portfolia“, „cron noční sync“, „scan v web GUI“, **grafy**,
+**valuační metriky + TWR/IRR + tooltipy**, oprava nočního syncu (skript přesunut do `~/.hermes/profiles/developer/scripts/`,
 `divtrack sync` bez argů teď zahrnuje i trvalou watchlistu), FMP fallback (Tiingo)
 a **mypy `disallow_untyped_defs = true`** (posledních 4 chybějících anotací doplněno).
 **Tiingo ověřeno proti živému API** — klíč nastaven, opraveny 3 odchylky od specifikace
@@ -170,6 +171,14 @@ Pokračování po přerušení: přečíst tuto sekci, pak `git status` a `git l
 ---
 
 ## 6) Log postupů (append-only, nejnovější nahoře)
+
+### 2026-09-09 — oprava nočního syncu (dvě chyby) + doplnění cen do watchlisty
+- **Problém**: uživatel hlásil, že akcie ve watchlistě nemají ceny. Diagnóza: noční sync v 02:31 selhal a dnes by selhal znovu — dvě nezávislé chyby.
+- **Chyba 1 — `api_usage` UNIQUE** (`db.py`, commit `8bc14bb`): tabulka má PRIMARY KEY jen na `provider`, ale kód zapisoval nový řádek pro každý den (SELECT+INSERT/UPDATE). Starý řádek `tiingo/2026-09-07` z live testu nikdy nebyl resetován → první volání nového dne spadlo s `IntegrityError: UNIQUE constraint failed: api_usage.provider`. Oprava: atomický upsert `ON CONFLICT(provider)` — stejný den inkrementuje čítač, starý den resetuje na 1. Regresní test `test_record_api_call_resets_stale_day_row`.
+- **Chyba 2 — Tiingo timeout** (`tiingo.py`, commit `7b6e058`): `_get_json` chytal jen `HTTPError`/`URLError`; `TimeoutError` z `resp.read()` (timeout PŘI ČTENÍ TĚLA ODPOVĚDI) proletěl celým provider chainem a sync skončil exit 1. Oprava: `except OSError → TiingoError` (TimeoutError je podtyp OSErroru), chain pokračuje na yfinance fallback. Regresní test `test_read_timeout_raises_tiingo_error`.
+- **Live sync** (`divtrack sync --backfill`): 10 tickerů, `cached: 5, tiingo: 5`, ceny aktualizovány pro všech 10 (ABT 105.52, AMGN 393.17, COP 135.04, CVX 209.80, HD 313.70, KO 88.36, MRK 148.46, PG 145.58, UNH 400.84, VZ 50.41), historie cen 2510 bodů (52tídní percentil/drawdown + TWR/IRR doplněny). Tiingo: 38/10000 volání.
+- **Web server restartnut** na aktuální kód (starý proces běžel od předchozích commitů); ověřeno `/api/health` 200, `/api/watchlist` — všech 10 řádků má `price`, `/api/tiingo-status` OK.
+- **Ověření**: **316 passed** (+2 nové regresní testy), ruff clean, mypy clean (35 souborů).
 
 ### 2026-09-07 — Ukliděno na další práci + odstraněna duplicita nočního syncu
 - **Duplicitní crontab**: user `crontab` měl vlastní záznam `divtrack sync` na 02:30, který se překrýval s Hermes cron jobem `divtrack-nightly-sync` (stejný čas) → zítra by se sync spustil dvakrát (dvojnásobné API volání + závod na SQLite). User crontab obsahoval jen tuhle řádku, takže nahrazen komentářem; kanonický je Hermes cron job (má doručení zprávy + ošetření chyb).
