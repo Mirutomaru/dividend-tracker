@@ -112,6 +112,32 @@ def test_get_api_usage_empty(db):
     assert u["remaining"] is None
 
 
+def test_record_api_call_resets_stale_day_row(db, tmp_path):
+    """Regrese: starý řádek z předchozího dne nesmí rozbít INSERT (UNIQUE na provider).
+
+    Scénář nočního syncu 2026-09-09 — v tabulce byl řádek tiingo/2026-09-07
+    a první volání nového dne spadlo s ``IntegrityError: UNIQUE constraint
+    failed: api_usage.provider``.
+    """
+    from dividend_tracker.data.db import _utc_day
+
+    stale_day = "2026-01-01"
+    assert stale_day != _utc_day()  # fixture nesmí náhodně narazit na dnešek
+    with db._conn() as conn:
+        conn.execute(
+            "INSERT INTO api_usage (provider, day, calls_used, daily_limit, expires_at) VALUES (?,?,?,?,?)",
+            ("fmp", stale_day, 7, DAILY_LIMIT, time.time()),
+        )
+    # První volání nového dne: reset na 1 místo IntegrityError.
+    u = db.record_api_call("fmp", daily_limit=DAILY_LIMIT)
+    assert u["calls_used"] == 1
+    assert u["day"] == _utc_day()
+    assert u["remaining"] == DAILY_LIMIT - 1
+    # Druhé volání stejného dne: increment na 2.
+    u = db.record_api_call("fmp", daily_limit=DAILY_LIMIT)
+    assert u["calls_used"] == 2
+
+
 # --------------------------------------------------------------------- reports
 
 def _sample_report(ticker: str, price: float) -> dict:

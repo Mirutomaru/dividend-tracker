@@ -411,26 +411,27 @@ class Database:
     # --------------------------------------------------------------- api_usage
 
     def record_api_call(self, provider: str, daily_limit: int | None = None) -> dict[str, Any]:
-        """Zapíše jedno volání a vrátí aktuální stav čítače pro daný den."""
+        """Zapíše jedno volání a vrátí aktuální stav čítače pro daný den.
+
+        Tabulka má PRIMARY KEY jen na ``provider`` (jeden řádek na provider),
+        takže upsert atomicky buď zvýší čítač dnešního řádku, nebo resetuje
+        starý řádek z předchozích dní (jinak by INSERT narazil na UNIQUE).
+        """
         day = _utc_day()
+        expires_at = time.time() + 86400.0
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM api_usage WHERE provider=? AND day=?", (provider, day)
-            ).fetchone()
-            if row is None:
-                expires_at = time.time() + 86400.0
-                conn.execute(
-                    """INSERT INTO api_usage (provider, day, calls_used, daily_limit, expires_at)
-                       VALUES (?,?,?,?,?)""",
-                    (provider, day, 1, daily_limit, expires_at),
-                )
-            else:
-                new_limit = daily_limit if daily_limit is not None else row["daily_limit"]
-                conn.execute(
-                    "UPDATE api_usage SET calls_used=calls_used+1, daily_limit=COALESCE(?, daily_limit) WHERE provider=? AND day=?",
-                    (new_limit, provider, day),
-                )
-            return self.get_api_usage(provider)
+            conn.execute(
+                """INSERT INTO api_usage (provider, day, calls_used, daily_limit, expires_at)
+                   VALUES (?,?,?,?,?)
+                   ON CONFLICT(provider) DO UPDATE SET
+                     day         = excluded.day,
+                     calls_used  = CASE WHEN api_usage.day = excluded.day
+                                        THEN api_usage.calls_used + 1 ELSE 1 END,
+                     daily_limit = COALESCE(excluded.daily_limit, api_usage.daily_limit),
+                     expires_at  = excluded.expires_at""",
+                (provider, day, 1, daily_limit, expires_at),
+            )
+        return self.get_api_usage(provider)
 
     def get_api_usage(self, provider: str) -> dict[str, Any]:
         with self._conn() as conn:
